@@ -160,6 +160,8 @@ p {
 }
 
 .topbar {
+  position: relative;
+  z-index: 50;
   min-height: 48px;
   display: flex;
   align-items: center;
@@ -184,10 +186,28 @@ p {
 }
 
 .topbar-page {
+  flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.menu-toggle {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0 !important;
+  background: transparent !important;
+  color: #52525b !important;
+  font-size: 1.2rem !important;
+  line-height: 1;
+}
+
+.menu-toggle:hover {
+  background: #efefed !important;
 }
 
 .topbar-page strong {
@@ -200,16 +220,42 @@ p {
 .workspace {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  position: relative;
   height: calc(100vh - 48px);
 }
 
 .sidebar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 30;
+  width: min(300px, calc(100vw - 48px));
   padding: 0.55rem 0.45rem 1rem;
   background: #f7f7f5;
   border-right: 1px solid #e7e7e4;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  visibility: hidden;
+  transform: translateX(-100%);
+  transition:
+    transform 180ms ease,
+    visibility 180ms;
+  box-shadow: 12px 0 28px rgb(0 0 0 / 10%);
+}
+
+.sidebar.open {
+  visibility: visible;
+  transform: translateX(0);
+}
+
+.sidebar-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  width: 100%;
+  padding: 0;
+  border-radius: 0;
+  background: rgb(15 23 42 / 18%);
+  cursor: default;
 }
 
 .sidebar-workspace {
@@ -355,6 +401,7 @@ p {
 }
 
 .editor-pane {
+  height: 100%;
   padding: 2rem clamp(1.5rem, 6vw, 7rem) 4rem;
   min-width: 0;
   position: relative;
@@ -547,17 +594,17 @@ p {
 
 @media (max-width: 760px) {
   .topbar {
-    align-items: flex-start;
+    gap: 0.35rem;
+    padding-inline: 0.45rem;
   }
 
-  .workspace {
-    grid-template-columns: 1fr;
+  .topbar nav {
+    flex-wrap: nowrap;
   }
 
-  .sidebar {
-    border-right: 0;
-    border-bottom: 1px solid #dde2ea;
-    max-height: 230px;
+  .topbar nav button {
+    padding-inline: 0.5rem;
+    font-size: 0.78rem;
   }
 
   .editor-pane {

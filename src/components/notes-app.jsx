@@ -52,6 +52,7 @@ export default function NotesApp() {
   const [notes, setNotes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [collapsedIds, setCollapsedIds] = useState(() => new Set());
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [idleTimeoutMs, setIdleTimeoutMs] = useState(15 * 60 * 1000);
   const [saveStatus, setSaveStatus] = useState("Salvo");
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -84,6 +85,7 @@ export default function NotesApp() {
     setNotes([]);
     setSelectedId(null);
     setCollapsedIds(new Set());
+    setSidebarOpen(false);
     setAttachments([]);
     setScreen("login");
     setMessage({ text });
@@ -234,6 +236,15 @@ export default function NotesApp() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
   }, []);
 
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setSidebarOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [sidebarOpen]);
+
   async function flushSave() {
     if (saveTimer.current) await saveCurrentRef.current?.();
     while (saving.current) {
@@ -286,6 +297,7 @@ export default function NotesApp() {
         });
       }
       setSelectedId(result.note.id);
+      setSidebarOpen(false);
     } catch (error) {
       if (error.status === 401) handleLocked();
       else setVaultMessage({ text: error.message });
@@ -591,6 +603,12 @@ export default function NotesApp() {
       <section className="vault">
         <header className="topbar">
           <div className="topbar-page">
+            <button type="button" className="menu-toggle"
+              aria-label={sidebarOpen ? "Fechar menu de páginas" : "Abrir menu de páginas"}
+              aria-controls="page-sidebar" aria-expanded={sidebarOpen}
+              onClick={() => setSidebarOpen((open) => !open)}>
+              <span aria-hidden="true">☰</span>
+            </button>
             <span className="page-glyph" aria-hidden="true">▤</span>
             <strong>{selected?.title || "Cofre de notas"}</strong>
           </div>
@@ -601,7 +619,10 @@ export default function NotesApp() {
         </header>
         <Message value={vaultMessage} />
         <div className="workspace">
-          <aside className="sidebar">
+          {sidebarOpen && <button type="button" className="sidebar-backdrop"
+            aria-label="Fechar menu de páginas" onClick={() => setSidebarOpen(false)} />}
+          <aside id="page-sidebar" className={`sidebar${sidebarOpen ? " open" : ""}`}
+            aria-hidden={!sidebarOpen} inert={sidebarOpen ? undefined : ""}>
             <div className="sidebar-workspace">
               <span className="workspace-avatar" aria-hidden="true">
                 {(user?.username || "C").slice(0, 1).toUpperCase()}
@@ -626,7 +647,11 @@ export default function NotesApp() {
                   return next;
                 })}
                 onCreateChild={createNote}
-                onSelect={async (id) => { await flushSave(); setSelectedId(id); }} />
+                onSelect={async (id) => {
+                  await flushSave();
+                  setSelectedId(id);
+                  setSidebarOpen(false);
+                }} />
             </div>
           </aside>
           {!selected && <section className="empty-editor">Selecione uma nota ou crie uma nova.</section>}
