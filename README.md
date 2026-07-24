@@ -1,20 +1,21 @@
 # Cofre de notas
 
-Aplicação local multiusuário para notas armazenadas em SQLite com os campos
+Aplicação Next.js multiusuário para notas armazenadas em SQLite com os campos
 sensíveis criptografados por usuário.
 
 ## Estrutura
 
-`notes/notes.js` é o único ponto de entrada. As responsabilidades internas
-ficam separadas:
+- `src/app`: App Router, página e Route Handlers da API;
+- `src/components`: interface React; componentes podem permanecer em
+  JavaScript quando tipagem não agrega valor;
+- `src/server`: criptografia, SQLite, sessões e regras dos cofres;
+- `src/proxy.ts`: CSP com nonce e cabeçalhos de segurança;
+- `test`: teste de integração que sobe o servidor Next.js real;
+- `Dockerfile`: imagem standalone de produção;
+- `Dockerfile.test`: build e suíte isolada.
 
-- `application.js`: servidor HTTP e roteamento da API;
-- `vault.js`: operações de usuários, notas, convites e chaves;
-- `sessions.js`: sessões, CSRF, expiração e limite de tentativas;
-- `crypto.js`: primitivas AES-256-GCM e `scrypt`;
-- `db.js`: esquema e conexão SQLite;
-- `http.js` e `validation.js`: utilitários de protocolo e validação;
-- `public/`: interface executada no navegador.
+O build usa `output: "standalone"` do Next.js. O esquema SQLite continua
+compatível com a versão anterior; volumes existentes não precisam de migração.
 
 ## Garantias e limites
 
@@ -53,15 +54,17 @@ docker compose -f docker-compose.production.yml run --rm setup \
 O token só cria o primeiro administrador e não descriptografa notas. Depois que
 o primeiro usuário existe, o endpoint de configuração fica desativado.
 
-O log `Notes disponível em http://0.0.0.0:3001` refere-se à interface interna
-do container. No navegador local, use sempre `http://127.0.0.1:3001`.
+No navegador local, use sempre `http://127.0.0.1:3001`. O endereço
+`0.0.0.0:3001` visto em logs é apenas a interface interna do container.
 
 Variáveis disponíveis:
 
 | Variável | Padrão | Finalidade |
 | --- | --- | --- |
 | `PORT` | `3001` | Porta HTTP |
-| `HOST` | `127.0.0.1` | Interface de rede do processo |
+| `HOSTNAME` | `0.0.0.0` | Interface interna do container |
+| `NOTES_BIND_ADDRESS` | `127.0.0.1` | Interface publicada no host |
+| `NOTES_PORT` | `3001` | Porta publicada no host |
 | `NOTES_DB` | `data/notes.sqlite` | Caminho do SQLite |
 | `NOTES_ADMIN_SETUP_TOKEN_FILE` | — | Arquivo contendo o token inicial |
 | `NOTES_ADMIN_SETUP_TOKEN` | — | Alternativa local ao arquivo secreto |
@@ -105,7 +108,8 @@ docker run --rm --network none --read-only --tmpfs /tmp notes:test
 ### Produção
 
 A imagem de produção contém apenas a aplicação e as dependências necessárias,
-executa como o usuário não-root `node` e possui healthcheck:
+usa o servidor standalone do Next.js, executa como usuário não-root e possui
+healthcheck:
 
 ```bash
 ./deploy.sh
