@@ -50,6 +50,7 @@ export default function NotesApp() {
   const [user, setUser] = useState(null);
   const [notes, setNotes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const [saveStatus, setSaveStatus] = useState("Salvo");
   const [adminOpen, setAdminOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -79,6 +80,7 @@ export default function NotesApp() {
     setUser(null);
     setNotes([]);
     setSelectedId(null);
+    setCollapsedIds(new Set());
     setAttachments([]);
     setScreen("login");
     setMessage({ text: "A sessão foi bloqueada. Informe a senha novamente." });
@@ -131,6 +133,7 @@ export default function NotesApp() {
       id: note.id,
       title: note.title.trim() || "Sem título",
       markdown: editorToMarkdown(quill.current),
+      parentId: note.parentId || null,
       revision: note.revision
     };
     try {
@@ -262,16 +265,23 @@ export default function NotesApp() {
     }
   }
 
-  async function createNote() {
+  async function createNote(parentId = null) {
     setVaultMessage(null);
     await flushSave();
     try {
       const result = await requestApi("/api/notes", {
         method: "POST",
         csrfToken,
-        body: { title: "Nova nota", markdown: "" }
+        body: { title: "Nova página", markdown: "", parentId }
       });
       setNotes((current) => [result.note, ...current]);
+      if (parentId) {
+        setCollapsedIds((current) => {
+          const next = new Set(current);
+          next.delete(parentId);
+          return next;
+        });
+      }
       setSelectedId(result.note.id);
     } catch (error) {
       if (error.status === 401) handleLocked();
@@ -280,19 +290,40 @@ export default function NotesApp() {
   }
 
   async function deleteNote() {
-    if (!selected || !confirm(`Excluir definitivamente “${selected.title}”?`)) return;
+    if (!selected) return;
+    const descendants = collectDescendantIds(notes, selected.id);
+    const detail = descendants.size > 0
+      ? ` e suas ${descendants.size} subpágina(s)`
+      : "";
+    if (!confirm(`Excluir definitivamente “${selected.title}”${detail}?`)) return;
     try {
       await requestApi(`/api/notes/${selected.id}`, {
         method: "DELETE",
         csrfToken
       });
-      const remaining = notes.filter((note) => note.id !== selected.id);
+      const removed = new Set([selected.id, ...descendants]);
+      const remaining = notes.filter((note) => !removed.has(note.id));
       setNotes(remaining);
       setSelectedId(remaining[0]?.id || null);
     } catch (error) {
       if (error.status === 401) handleLocked();
       else setVaultMessage({ text: error.message });
     }
+  }
+
+  function moveSelected(parentId) {
+    if (!selected) return;
+    setNotes((current) => current.map((note) =>
+      note.id === selected.id ? { ...note, parentId: parentId || null } : note
+    ));
+    if (parentId) {
+      setCollapsedIds((current) => {
+        const next = new Set(current);
+        next.delete(parentId);
+        return next;
+      });
+    }
+    queueSave();
   }
 
   async function uploadAttachments(event) {
@@ -499,28 +530,45 @@ export default function NotesApp() {
         <Message value={vaultMessage} />
         <div className="workspace">
           <aside className="sidebar">
-            <button onClick={createNote}>+ Nova nota</button>
+            <button onClick={() => createNote(null)}>+ Nova página</button>
             <div className="note-list">
-              {notes.map((note) => (
-                <button key={note.id} className={`note-item${note.id === selectedId ? " active" : ""}`}
-                  onClick={async () => { await flushSave(); setSelectedId(note.id); }}>
-                  <strong>{note.title}</strong>
-                  <small>{new Date(note.updatedAt).toLocaleString()}</small>
-                </button>
-              ))}
+              <NoteTree notes={notes} parentId={null} selectedId={selectedId}
+                collapsedIds={collapsedIds}
+                onToggle={(id) => setCollapsedIds((current) => {
+                  const next = new Set(current);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                })}
+                onCreateChild={createNote}
+                onSelect={async (id) => { await flushSave(); setSelectedId(id); }} />
             </div>
           </aside>
           {!selected && <section className="empty-editor">Selecione uma nota ou crie uma nova.</section>}
           <section className={`editor-pane${selected ? "" : " hidden"}`}>
             <div className="editor-heading">
-              <input value={selected?.title || ""} maxLength={200} aria-label="Título da nota"
-                onChange={(event) => {
-                  const title = event.target.value;
-                  setNotes((current) => current.map((note) =>
-                    note.id === selectedId ? { ...note, title } : note
-                  ));
-                  queueSave();
-                }} />
+              <div className="page-heading-fields">
+                <input value={selected?.title || ""} maxLength={200} aria-label="Título da nota"
+                  onChange={(event) => {
+                    const title = event.target.value;
+                    setNotes((current) => current.map((note) =>
+                      note.id === selectedId ? { ...note, title } : note
+                    ));
+                    queueSave();
+                  }} />
+                <label className="parent-picker">
+                  Dentro de
+                  <select value={selected?.parentId || ""}
+                    onChange={(event) => moveSelected(event.target.value)}>
+                    <option value="">Raiz do cofre</option>
+                    {parentChoices(notes, selectedId).map(({ note, depth }) => (
+                      <option key={note.id} value={note.id}>
+                        {"— ".repeat(depth)}{note.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <span>{saveStatus} · Markdown</span>
             </div>
             <div ref={editorElement} className="editor" />
@@ -599,6 +647,47 @@ function AuthForm({ title, submit, setup = false, children, onSubmit }) {
   );
 }
 
+function NoteTree({
+  notes,
+  parentId,
+  selectedId,
+  collapsedIds,
+  onToggle,
+  onCreateChild,
+  onSelect
+}) {
+  const children = notes.filter((note) => (note.parentId || null) === parentId);
+  return children.map((note) => {
+    const hasChildren = notes.some((item) => item.parentId === note.id);
+    const collapsed = collapsedIds.has(note.id);
+    return (
+      <div className="note-tree-node" key={note.id}>
+        <div className="note-tree-row">
+          <button className="tree-toggle" disabled={!hasChildren}
+            aria-label={`${collapsed ? "Expandir" : "Recolher"} ${note.title}`}
+            onClick={() => hasChildren && onToggle(note.id)}>
+            {hasChildren ? (collapsed ? "▸" : "▾") : "·"}
+          </button>
+          <button className={`note-item${note.id === selectedId ? " active" : ""}`}
+            onClick={() => onSelect(note.id)}>
+            <strong>{note.title}</strong>
+            <small>{new Date(note.updatedAt).toLocaleString()}</small>
+          </button>
+          <button className="add-child" aria-label={`Criar subpágina em ${note.title}`}
+            onClick={() => onCreateChild(note.id)}>+</button>
+        </div>
+        {hasChildren && !collapsed && (
+          <div className="note-children">
+            <NoteTree notes={notes} parentId={note.id} selectedId={selectedId}
+              collapsedIds={collapsedIds} onToggle={onToggle}
+              onCreateChild={onCreateChild} onSelect={onSelect} />
+          </div>
+        )}
+      </div>
+    );
+  });
+}
+
 function Modal({ title, children, onClose }) {
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -615,4 +704,36 @@ function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function collectDescendantIds(notes, parentId) {
+  const descendants = new Set();
+  const pending = [parentId];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const note of notes) {
+      if (note.parentId === current && !descendants.has(note.id)) {
+        descendants.add(note.id);
+        pending.push(note.id);
+      }
+    }
+  }
+  return descendants;
+}
+
+function parentChoices(notes, selectedId) {
+  const unavailable = collectDescendantIds(notes, selectedId);
+  unavailable.add(selectedId);
+  const choices = [];
+
+  function visit(parentId, depth) {
+    for (const note of notes) {
+      if ((note.parentId || null) !== parentId) continue;
+      if (!unavailable.has(note.id)) choices.push({ note, depth });
+      visit(note.id, depth + 1);
+    }
+  }
+
+  visit(null, 0);
+  return choices;
 }

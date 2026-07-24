@@ -16,7 +16,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -43,7 +44,8 @@ button.danger {
   background: #b42318;
 }
 
-input {
+input,
+select {
   width: 100%;
   border: 1px solid #cbd3df;
   border-radius: 8px;
@@ -185,7 +187,41 @@ p {
 
 .note-list {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.2rem;
+}
+
+.note-tree-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.note-children {
+  margin-left: 1rem;
+  padding-left: 0.45rem;
+  border-left: 1px solid #dde2ea;
+}
+
+.tree-toggle,
+.add-child {
+  padding: 0.25rem;
+  background: transparent;
+  color: #738095;
+}
+
+.tree-toggle:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.add-child {
+  visibility: hidden;
+}
+
+.note-tree-row:hover .add-child,
+.add-child:focus-visible {
+  visibility: visible;
 }
 
 .note-item {
@@ -232,6 +268,25 @@ p {
 .editor-heading input {
   font-size: 1.3rem;
   font-weight: 700;
+}
+
+.page-heading-fields {
+  flex: 1;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.parent-picker {
+  grid-template-columns: auto minmax(180px, 320px);
+  align-items: center;
+  justify-content: start;
+  color: #718096;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.parent-picker select {
+  padding: 0.45rem 0.6rem;
 }
 
 .editor-heading span {
@@ -386,6 +441,7 @@ p {
   .auth-card,
   .sidebar,
   input,
+  select,
   .editor,
   .attachment-row,
   .modal-card {
@@ -408,6 +464,10 @@ p {
   .note-item.active {
     background: #273553;
     border-color: #48629a;
+  }
+
+  .note-children {
+    border-color: #354154;
   }
 
   button.secondary {
