@@ -17,6 +17,23 @@ sensíveis criptografados por usuário.
 O build usa `output: "standalone"` do Next.js. O esquema SQLite continua
 compatível com a versão anterior; volumes existentes não precisam de migração.
 
+## Árvore de páginas
+
+As notas funcionam como páginas organizadas em uma árvore:
+
+- o botão `+` ao lado de uma página cria uma subpágina;
+- os ramos podem ser recolhidos e expandidos;
+- o seletor **Dentro de** move a página para a raiz ou para outra página;
+- páginas podem ter quantos níveis forem necessários;
+- ciclos são rejeitados pelo servidor;
+- excluir uma página remove toda a subárvore e seus anexos.
+
+A coluna relacional `parent_id` permite montar a árvore e aplicar a exclusão em
+cascata. A mesma relação também fica dentro do payload criptografado: se alguém
+alterar diretamente a hierarquia no SQLite, a verificação AES-GCM detecta a
+divergência. Um banco copiado ainda pode revelar quais identificadores estão
+relacionados, mas não os títulos nem o conteúdo dessas páginas.
+
 ## Editor e formato
 
 O conteúdo é editado visualmente com Quill (WYSIWYG), convertido para Markdown
