@@ -627,7 +627,10 @@ export default function NotesApp() {
     <main className="shell">
       <section className="vault">
         <header className="topbar">
-          <div><strong>Cofre de notas</strong><span className="current-user">{user?.username}</span></div>
+          <div className="topbar-page">
+            <span className="page-glyph" aria-hidden="true">▤</span>
+            <strong>{selected?.title || "Cofre de notas"}</strong>
+          </div>
           <nav>
             {user?.role === "admin" && <button className="secondary" onClick={openInvites}>Convites</button>}
             <button className="secondary" onClick={() => setPasswordOpen(true)}>Trocar senha</button>
@@ -637,7 +640,20 @@ export default function NotesApp() {
         <Message value={vaultMessage} />
         <div className="workspace">
           <aside className="sidebar">
-            <button onClick={() => createNote(null)}>+ Nova página</button>
+            <div className="sidebar-workspace">
+              <span className="workspace-avatar" aria-hidden="true">
+                {(user?.username || "C").slice(0, 1).toUpperCase()}
+              </span>
+              <div>
+                <strong>{user?.username}</strong>
+                <small>Cofre privado</small>
+              </div>
+            </div>
+            <div className="sidebar-section-heading">
+              <span>Páginas</span>
+              <button aria-label="Criar página na raiz" title="Criar página na raiz"
+                onClick={() => createNote(null)}>+</button>
+            </div>
             <div className="note-list">
               <NoteTree notes={notes} parentId={null} selectedId={selectedId}
                 collapsedIds={collapsedIds}
@@ -798,10 +814,10 @@ function NoteTree({
             onClick={() => hasChildren && onToggle(note.id)}>
             {hasChildren ? (collapsed ? "▸" : "▾") : "·"}
           </button>
+          <span className="page-glyph" aria-hidden="true">▤</span>
           <button className={`note-item${note.id === selectedId ? " active" : ""}`}
             onClick={() => onSelect(note.id)}>
             <strong>{note.title}</strong>
-            <small>{new Date(note.updatedAt).toLocaleString()}</small>
           </button>
           <button className="add-child" aria-label={`Criar subpágina em ${note.title}`}
             onClick={() => onCreateChild(note.id)}>+</button>
