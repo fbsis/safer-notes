@@ -37,7 +37,7 @@ Todo o projeto roda dentro do Docker. O host precisa apenas de Docker com
 Compose; não é necessário instalar Node.js, npm, OpenSSL ou SQLite.
 
 ```bash
-docker compose up -d --build
+./deploy.sh
 ```
 
 Acesse `http://127.0.0.1:3001`. O Compose gera automaticamente o token de
@@ -46,11 +46,15 @@ configuração dentro do volume `notes_secrets`.
 Para visualizar o token no primeiro acesso:
 
 ```bash
-docker compose run --rm setup cat /secrets/admin-setup-token
+docker compose -f docker-compose.production.yml run --rm setup \
+  cat /secrets/admin-setup-token
 ```
 
 O token só cria o primeiro administrador e não descriptografa notas. Depois que
 o primeiro usuário existe, o endpoint de configuração fica desativado.
+
+O log `Notes disponível em http://0.0.0.0:3001` refere-se à interface interna
+do container. No navegador local, use sempre `http://127.0.0.1:3001`.
 
 Variáveis disponíveis:
 
@@ -66,8 +70,8 @@ Variáveis disponíveis:
 Para acompanhar ou encerrar:
 
 ```bash
-docker compose logs -f notes
-docker compose down
+docker compose -f docker-compose.production.yml logs -f notes
+docker compose -f docker-compose.production.yml down
 ```
 
 `docker compose down` preserva os volumes. Não use `down -v` em produção, pois
@@ -104,8 +108,26 @@ A imagem de produção contém apenas a aplicação e as dependências necessár
 executa como o usuário não-root `node` e possui healthcheck:
 
 ```bash
-docker compose up -d --build
+./deploy.sh
 ```
+
+O deploy valida os dois arquivos Compose, executa os testes isolados, constrói
+a imagem de produção, atualiza os serviços e aguarda o healthcheck. Opções:
+
+```bash
+# Porta ou endereço de publicação
+NOTES_PORT=8080 NOTES_BIND_ADDRESS=127.0.0.1 ./deploy.sh
+
+# Cookies Secure quando houver um proxy HTTPS
+NOTES_HTTPS=1 ./deploy.sh
+
+# Somente para uma repetição em que os testes já foram executados
+SKIP_TESTS=1 ./deploy.sh
+```
+
+O arquivo [docker-compose.production.yml](docker-compose.production.yml) aplica
+filesystem somente para leitura, capabilities removidas, limite de processos,
+limite de memória, rotação de logs e volumes separados para dados e token.
 
 ## Operação
 
