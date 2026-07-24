@@ -50,10 +50,15 @@ anexo é salvo na tabela `attachments`, vinculado à nota e ao usuário. Nome,
 tipo MIME e conteúdo usam campos criptografados separados, permitindo listar os
 anexos sem descriptografar os bytes do arquivo.
 
+- links HTTP/HTTPS arrastados para o editor viram links Markdown dentro do
+  conteúdo criptografado da nota;
+- arquivos arrastados para o editor seguem o mesmo fluxo criptografado do botão
+  de anexos;
+- protocolos ativos como `javascript:` e `data:` são rejeitados no drop;
 - PNG, JPEG, GIF, WebP e AVIF são exibidos dentro do editor;
-- os demais tipos aparecem como links e são baixados como
-  `application/octet-stream`;
-- o limite é de 10 MiB por arquivo e 100 MiB de anexos por nota;
+- arquivos genéricos aparecem como links de consulta e são baixados como
+  `application/octet-stream`, independentemente do MIME informado;
+- o limite é de 50 MiB por arquivo e 500 MiB de anexos por nota;
 - excluir uma nota remove seus anexos em cascata;
 - excluir um anexo pela lista também remove suas referências do conteúdo.
 
