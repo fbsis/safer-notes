@@ -216,12 +216,12 @@ p {
 }
 
 .add-child {
-  visibility: hidden;
+  opacity: 0.4;
 }
 
 .note-tree-row:hover .add-child,
 .add-child:focus-visible {
-  visibility: visible;
+  opacity: 1;
 }
 
 .note-item {
