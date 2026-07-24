@@ -17,6 +17,17 @@ sensíveis criptografados por usuário.
 O build usa `output: "standalone"` do Next.js. O esquema SQLite continua
 compatível com a versão anterior; volumes existentes não precisam de migração.
 
+## Editor e formato
+
+O conteúdo é editado visualmente com Quill (WYSIWYG), convertido para Markdown
+antes de ser enviado à API e reconstruído no editor ao abrir a nota. O HTML
+gerado a partir do Markdown é sanitizado antes da renderização.
+
+O Markdown fica dentro do payload criptografado no SQLite; ele não é gravado
+como um arquivo `.md` legível no volume. Notas da versão anterior, armazenadas
+como Quill Delta, continuam abrindo e são convertidas para Markdown no próximo
+salvamento.
+
 ## Garantias e limites
 
 - Título e conteúdo são criptografados com AES-256-GCM antes de chegarem ao
