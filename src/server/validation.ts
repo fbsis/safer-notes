@@ -1,7 +1,7 @@
 import { HttpError } from "./errors";
 import type { NotePayload } from "./types";
 
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 export function normalizeUsername(username: unknown) {
   if (typeof username !== "string") throw new HttpError(400, "Usuário inválido.");
@@ -49,7 +49,7 @@ export function validateParentId(value: unknown) {
 export function validateAttachment(file: File) {
   if (file.size < 1) throw new HttpError(400, "O arquivo está vazio.");
   if (file.size > MAX_ATTACHMENT_BYTES) {
-    throw new HttpError(413, "O arquivo excede o limite de 10 MiB.");
+    throw new HttpError(413, "O arquivo excede o limite de 50 MiB.");
   }
 
   const sourceName = file.name.normalize("NFKC").split(/[\\/]/).pop()?.trim() ?? "";

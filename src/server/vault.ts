@@ -27,7 +27,7 @@ import type {
   UserRow
 } from "./types";
 
-const MAX_ATTACHMENTS_PER_NOTE_BYTES = 100 * 1024 * 1024;
+const MAX_ATTACHMENTS_PER_NOTE_BYTES = 500 * 1024 * 1024;
 
 interface InviteRow {
   id: string;
@@ -409,7 +409,7 @@ export class Vault {
       bytes: number | bigint;
     };
     if (Number(current.bytes) + data.byteLength > MAX_ATTACHMENTS_PER_NOTE_BYTES) {
-      throw new HttpError(413, "Os anexos desta nota excedem o limite de 100 MiB.");
+      throw new HttpError(413, "Os anexos desta nota excedem o limite de 500 MiB.");
     }
 
     const id = crypto.randomUUID();

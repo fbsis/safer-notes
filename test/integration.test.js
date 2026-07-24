@@ -155,12 +155,12 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     headers: { "X-CSRF-Token": adminCsrf },
     body: {
       title: adminNote.title,
-      markdown: `${adminNote.markdown}\n\n- item em Markdown`,
+      markdown: `${adminNote.markdown}\n\n- item em Markdown\n\n[link privado](https://example.test/SEGREDO-LINK-CRIPTOGRAFADO)`,
       revision: adminNote.revision
     }
   });
   assert.equal(result.response.status, 200);
-  assert.match(result.data.note.markdown, /- item em Markdown$/);
+  assert.match(result.data.note.markdown, /SEGREDO-LINK-CRIPTOGRAFADO/);
   adminNote.revision = result.data.note.revision;
 
   result = await request(admin, "/api/notes", {
@@ -315,12 +315,14 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   const databaseBytes = fs.readFileSync(databasePath);
   assert.equal(databaseBytes.includes(Buffer.from("SEGREDO-TITULO")), false);
   assert.equal(databaseBytes.includes(Buffer.from("SEGREDO-CONTEUDO")), false);
+  assert.equal(databaseBytes.includes(Buffer.from("SEGREDO-LINK-CRIPTOGRAFADO")), false);
   assert.equal(databaseBytes.includes(Buffer.from("SEGREDO-NOME-DO-ARQUIVO")), false);
   assert.equal(databaseBytes.includes(Buffer.from(attachmentSecret)), false);
   if (fs.existsSync(`${databasePath}-wal`)) {
     const walBytes = fs.readFileSync(`${databasePath}-wal`);
     assert.equal(walBytes.includes(Buffer.from("SEGREDO-TITULO")), false);
     assert.equal(walBytes.includes(Buffer.from("SEGREDO-CONTEUDO")), false);
+    assert.equal(walBytes.includes(Buffer.from("SEGREDO-LINK-CRIPTOGRAFADO")), false);
     assert.equal(walBytes.includes(Buffer.from("SEGREDO-NOME-DO-ARQUIVO")), false);
     assert.equal(walBytes.includes(Buffer.from(attachmentSecret)), false);
   }
