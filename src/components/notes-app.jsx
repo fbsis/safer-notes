@@ -62,6 +62,7 @@ export default function NotesApp() {
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const editorElement = useRef(null);
+  const editorPane = useRef(null);
   const fileInput = useRef(null);
   const quill = useRef(null);
   const loadingEditor = useRef(false);
@@ -213,6 +214,7 @@ export default function NotesApp() {
   useEffect(() => {
     const note = notesRef.current.find((item) => item.id === selectedId);
     if (!note || !quill.current) return;
+    editorPane.current?.scrollTo({ top: 0 });
     loadingEditor.current = true;
     quill.current.setContents(noteToDelta(quill.current, note), "silent");
     loadingEditor.current = false;
@@ -669,6 +671,7 @@ export default function NotesApp() {
           </aside>
           {!selected && <section className="empty-editor">Selecione uma nota ou crie uma nova.</section>}
           <section className={`editor-pane${selected ? "" : " hidden"}${dragActive ? " drag-active" : ""}`}
+            ref={editorPane}
             onDragEnter={(event) => {
               event.preventDefault();
               setDragActive(true);

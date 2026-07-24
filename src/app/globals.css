@@ -437,18 +437,23 @@ p {
   position: sticky;
   top: -2rem;
   z-index: 5;
-  border-color: #e8e8e5;
+  border: 0;
+  border-bottom: 1px solid #e8e8e5;
   background: rgb(255 255 255 / 94%);
   backdrop-filter: blur(10px);
 }
 
 .ql-container.ql-snow {
-  border-color: #e8e8e5;
+  border: 0;
 }
 
 .ql-container {
   min-height: calc(100vh - 280px);
   font-size: 1rem;
+}
+
+.ql-editor {
+  padding: 1.2rem 0;
 }
 
 .editor-actions {
