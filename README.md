@@ -111,6 +111,7 @@ Variáveis disponíveis:
 | `NOTES_ADMIN_SETUP_TOKEN_FILE` | — | Arquivo contendo o token inicial |
 | `NOTES_ADMIN_SETUP_TOKEN` | — | Alternativa local ao arquivo secreto |
 | `NOTES_HTTPS` | `0` | Use `1` atrás de HTTPS para ativar cookie `Secure` |
+| `NOTES_IDLE_MINUTES` | `15` | Minutos sem interação antes do bloqueio automático |
 
 Para acompanhar ou encerrar:
 
@@ -167,6 +168,9 @@ NOTES_PORT=8080 NOTES_BIND_ADDRESS=127.0.0.1 ./deploy.sh
 # Cookies Secure quando houver um proxy HTTPS
 NOTES_HTTPS=1 ./deploy.sh
 
+# Bloquear após 5 minutos sem interação na tela
+NOTES_IDLE_MINUTES=5 ./deploy.sh
+
 # Somente para uma repetição em que os testes já foram executados
 SKIP_TESTS=1 ./deploy.sh
 ```
@@ -177,8 +181,13 @@ limite de memória, rotação de logs e volumes separados para dados e token.
 
 ## Operação
 
-- O cofre bloqueia após 15 minutos sem requisições autenticadas, no logout ou
-  sempre que o processo reinicia.
+- O cofre bloqueia após o período configurado sem teclado, mouse, toque ou
+  rolagem, no logout ou sempre que o processo reinicia. Antes do bloqueio por
+  inatividade, o frontend conclui o autosave pendente e encerra a sessão no
+  backend.
+- Enquanto existe atividade na tela, um heartbeat autenticado mantém a sessão
+  do servidor ativa. O padrão é 15 minutos e pode ser alterado com
+  `NOTES_IDLE_MINUTES`.
 - Convites administrativos valem por 24 horas e são utilizáveis uma única vez.
 - O SQLite usa WAL. Para backup consistente, pare o container antes de copiar o
   volume ou utilize uma ferramenta de backup compatível com SQLite.
