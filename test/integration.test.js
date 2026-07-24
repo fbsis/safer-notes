@@ -39,7 +39,7 @@ async function availablePort() {
   });
 }
 
-async function startNext(databasePath, setupToken) {
+async function startNext(databasePath) {
   const port = await availablePort();
   const output = [];
   const child = spawn(
@@ -52,7 +52,6 @@ async function startNext(databasePath, setupToken) {
         NODE_ENV: "production",
         NEXT_TELEMETRY_DISABLED: "1",
         NOTES_DB: databasePath,
-        NOTES_ADMIN_SETUP_TOKEN: setupToken,
         NOTES_IDLE_MINUTES: "0.05"
       },
       stdio: ["ignore", "pipe", "pipe"]
@@ -121,77 +120,93 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     ) STRICT;
   `);
   legacyDatabase.close();
-  const server = await startNext(databasePath, "setup-token-for-integration-test");
+  const server = await startNext(databasePath);
 
   t.after(async () => {
     await stopNext(server.child);
     fs.rmSync(directory, { recursive: true, force: true });
   });
 
-  const admin = createClient(server.baseUrl);
-  let result = await request(admin, "/api/status");
+  const primary = createClient(server.baseUrl);
+  let result = await request(primary, "/api/status");
   assert.equal(result.data.idleTimeoutMs, 3000);
+  assert.equal("bootstrapRequired" in result.data, false);
   const page = await fetch(server.baseUrl);
   assert.equal(page.status, 200);
   assert.match(page.headers.get("content-security-policy"), /strict-dynamic/);
   assert.match(await page.text(), /Cofre de notas/);
 
-  result = await request(admin, "/api/bootstrap", {
+  result = await request(primary, "/api/register", {
     method: "POST",
     body: {
-      setupToken: "setup-token-for-integration-test",
-      username: "admin",
-      password: "admin-password-that-is-long"
+      username: "primary",
+      password: "primary-password-that-is-long"
     }
   });
   assert.equal(result.response.status, 201);
-  const adminCsrf = result.data.csrfToken;
+  const primaryCsrf = result.data.csrfToken;
+  const accountDatabase = new DatabaseSync(databasePath);
+  assert.equal(
+    accountDatabase.prepare("SELECT role FROM users WHERE username = ?").get("primary").role,
+    "user"
+  );
+  accountDatabase.close();
 
-  result = await request(admin, "/api/notes", {
+  const duplicate = createClient(server.baseUrl);
+  result = await request(duplicate, "/api/register", {
     method: "POST",
-    headers: { "X-CSRF-Token": adminCsrf },
+    body: {
+      username: "primary",
+      password: "different-password-that-is-long"
+    }
+  });
+  assert.equal(result.response.status, 409);
+
+  result = await request(primary, "/api/notes", {
+    method: "POST",
+    headers: { "X-CSRF-Token": primaryCsrf },
     body: {
       title: "SEGREDO-TITULO-NAO-DEVE-APARECER",
       markdown: "# SEGREDO-CONTEUDO-NAO-DEVE-APARECER\n\nTexto com **negrito**."
     }
   });
   assert.equal(result.response.status, 201);
-  const adminNote = result.data.note;
-  assert.equal(adminNote.parentId, null);
+  const primaryNote = result.data.note;
+  assert.equal(primaryNote.parentId, null);
   assert.equal(
-    adminNote.markdown,
+    primaryNote.markdown,
     "# SEGREDO-CONTEUDO-NAO-DEVE-APARECER\n\nTexto com **negrito**."
   );
 
-  result = await request(admin, `/api/notes/${adminNote.id}`, {
+  result = await request(primary, `/api/notes/${primaryNote.id}`, {
     method: "PATCH",
-    headers: { "X-CSRF-Token": adminCsrf },
+    headers: { "X-CSRF-Token": primaryCsrf },
     body: {
-      title: adminNote.title,
-      markdown: `${adminNote.markdown}\n\n- item em Markdown\n\n[link privado](https://example.test/SEGREDO-LINK-CRIPTOGRAFADO)`,
-      revision: adminNote.revision
+      title: primaryNote.title,
+      markdown: `${primaryNote.markdown}\n\n- item em Markdown\n\n[link privado](https://example.test/SEGREDO-LINK-CRIPTOGRAFADO)`,
+      revision: primaryNote.revision
     }
   });
   assert.equal(result.response.status, 200);
   assert.match(result.data.note.markdown, /SEGREDO-LINK-CRIPTOGRAFADO/);
-  adminNote.revision = result.data.note.revision;
+  primaryNote.revision = result.data.note.revision;
 
-  result = await request(admin, "/api/notes", {
+  result = await request(primary, "/api/notes", {
     method: "POST",
-    headers: { "X-CSRF-Token": adminCsrf },
+    headers: { "X-CSRF-Token": primaryCsrf },
     body: {
       title: "Página filha",
       markdown: "Conteúdo filho",
-      parentId: adminNote.id
+      parentId: primaryNote.id
     }
   });
   assert.equal(result.response.status, 201);
   const childNote = result.data.note;
-  assert.equal(childNote.parentId, adminNote.id);
+  assert.equal(childNote.parentId, primaryNote.id);
 
-  result = await request(admin, "/api/notes", {
+  result = await request(primary, "/api/notes", {
     method: "POST",
-    headers: { "X-CSRF-Token": adminCsrf },
+    headers: { "X-CSRF-Token": primaryCsrf },
     body: {
       title: "Página neta",
       markdown: "Conteúdo neto",
@@ -205,8 +220,8 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   const hierarchyDatabase = new DatabaseSync(databasePath);
   hierarchyDatabase
     .prepare("UPDATE notes SET parent_id = ? WHERE id = ?")
-    .run(adminNote.id, grandchildNote.id);
-  result = await request(admin, "/api/notes");
+    .run(primaryNote.id, grandchildNote.id);
+  result = await request(primary, "/api/notes");
   assert.equal(result.response.status, 500);
   assert.equal(result.data.error, "data_integrity_error");
   hierarchyDatabase
@@ -214,29 +229,29 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     .run(childNote.id, grandchildNote.id);
   hierarchyDatabase.close();
 
-  result = await request(admin, `/api/notes/${adminNote.id}`, {
+  result = await request(primary, `/api/notes/${primaryNote.id}`, {
     method: "PATCH",
-    headers: { "X-CSRF-Token": adminCsrf },
+    headers: { "X-CSRF-Token": primaryCsrf },
     body: {
-      title: adminNote.title,
-      markdown: adminNote.markdown,
+      title: primaryNote.title,
+      markdown: primaryNote.markdown,
       parentId: childNote.id,
-      revision: adminNote.revision
+      revision: primaryNote.revision
     }
   });
   assert.equal(result.response.status, 400);
   assert.equal(result.data.error, "invalid_parent");
 
-  result = await request(admin, "/api/notes", {
+  result = await request(primary, "/api/notes", {
     method: "POST",
-    headers: { "X-CSRF-Token": adminCsrf },
+    headers: { "X-CSRF-Token": primaryCsrf },
     body: { title: "Subárvore descartável", markdown: "", parentId: null }
   });
   assert.equal(result.response.status, 201);
   const disposableRoot = result.data.note;
-  result = await request(admin, "/api/notes", {
+  result = await request(primary, "/api/notes", {
     method: "POST",
-    headers: { "X-CSRF-Token": adminCsrf },
+    headers: { "X-CSRF-Token": primaryCsrf },
     body: {
       title: "Filha descartável",
       markdown: "",
@@ -244,12 +259,12 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     }
   });
   const disposableChild = result.data.note;
-  result = await request(admin, `/api/notes/${disposableRoot.id}`, {
+  result = await request(primary, `/api/notes/${disposableRoot.id}`, {
     method: "DELETE",
-    headers: { "X-CSRF-Token": adminCsrf }
+    headers: { "X-CSRF-Token": primaryCsrf }
   });
   assert.equal(result.response.status, 204);
-  result = await request(admin, "/api/notes");
+  result = await request(primary, "/api/notes");
   assert.equal(
     result.data.notes.some((note) =>
       note.id === disposableRoot.id || note.id === disposableChild.id
@@ -268,12 +283,12 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     )
   );
   let attachmentResponse = await fetch(
-    `${admin.baseUrl}/api/notes/${adminNote.id}/attachments`,
+    `${primary.baseUrl}/api/notes/${primaryNote.id}/attachments`,
     {
       method: "POST",
       headers: {
-        Cookie: admin.cookie,
-        "X-CSRF-Token": adminCsrf
+        Cookie: primary.cookie,
+        "X-CSRF-Token": primaryCsrf
       },
       body: attachmentForm
     }
@@ -291,12 +306,12 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   const imageForm = new FormData();
   imageForm.set("file", new File([imageBytes], "pixel.png", { type: "image/png" }));
   attachmentResponse = await fetch(
-    `${admin.baseUrl}/api/notes/${adminNote.id}/attachments`,
+    `${primary.baseUrl}/api/notes/${primaryNote.id}/attachments`,
     {
       method: "POST",
       headers: {
-        Cookie: admin.cookie,
-        "X-CSRF-Token": adminCsrf
+        Cookie: primary.cookie,
+        "X-CSRF-Token": primaryCsrf
       },
       body: imageForm
     }
@@ -305,20 +320,20 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   const imageAttachment = (await attachmentResponse.json()).attachment;
   assert.equal(imageAttachment.isImage, true);
 
-  result = await request(admin, `/api/notes/${adminNote.id}/attachments`);
+  result = await request(primary, `/api/notes/${primaryNote.id}/attachments`);
   assert.equal(result.response.status, 200);
   assert.equal(result.data.attachments.length, 2);
 
-  attachmentResponse = await fetch(`${admin.baseUrl}${attachment.url}`, {
-    headers: { Cookie: admin.cookie }
+  attachmentResponse = await fetch(`${primary.baseUrl}${attachment.url}`, {
+    headers: { Cookie: primary.cookie }
   });
   assert.equal(attachmentResponse.status, 200);
   assert.equal(attachmentResponse.headers.get("content-type"), "application/octet-stream");
   assert.match(attachmentResponse.headers.get("content-disposition"), /^attachment;/);
   assert.equal(await attachmentResponse.text(), attachmentSecret);
 
-  attachmentResponse = await fetch(`${admin.baseUrl}${imageAttachment.url}`, {
-    headers: { Cookie: admin.cookie }
+  attachmentResponse = await fetch(`${primary.baseUrl}${imageAttachment.url}`, {
+    headers: { Cookie: primary.cookie }
   });
   assert.equal(attachmentResponse.status, 200);
   assert.equal(attachmentResponse.headers.get("content-type"), "image/png");
@@ -340,20 +355,10 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     assert.equal(walBytes.includes(Buffer.from(attachmentSecret)), false);
   }
 
-  result = await request(admin, "/api/invites", {
-    method: "POST",
-    headers: { "X-CSRF-Token": adminCsrf },
-    body: {}
-  });
-  assert.equal(result.response.status, 201);
-  const inviteToken = result.data.token;
-  assert.equal(fs.readFileSync(databasePath).includes(Buffer.from(inviteToken)), false);
-
   const user = createClient(server.baseUrl);
   result = await request(user, "/api/register", {
     method: "POST",
     body: {
-      inviteToken,
       username: "usuario",
       password: "user-password-that-is-long"
     }
@@ -370,12 +375,12 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     body: {
       title: "Tentativa entre cofres",
       markdown: "",
-      parentId: adminNote.id
+      parentId: primaryNote.id
     }
   });
   assert.equal(result.response.status, 404);
 
-  result = await request(user, `/api/notes/${adminNote.id}`, {
+  result = await request(user, `/api/notes/${primaryNote.id}`, {
     method: "DELETE",
     headers: { "X-CSRF-Token": userCsrf }
   });
@@ -386,60 +391,60 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   });
   assert.equal(attachmentResponse.status, 404);
 
-  result = await request(admin, `/api/attachments/${attachment.id}`, {
+  result = await request(primary, `/api/attachments/${attachment.id}`, {
     method: "DELETE",
-    headers: { "X-CSRF-Token": adminCsrf }
+    headers: { "X-CSRF-Token": primaryCsrf }
   });
   assert.equal(result.response.status, 204);
-  attachmentResponse = await fetch(`${admin.baseUrl}${attachment.url}`, {
-    headers: { Cookie: admin.cookie }
+  attachmentResponse = await fetch(`${primary.baseUrl}${attachment.url}`, {
+    headers: { Cookie: primary.cookie }
   });
   assert.equal(attachmentResponse.status, 404);
 
-  result = await request(admin, "/api/password", {
+  result = await request(primary, "/api/password", {
     method: "POST",
-    headers: { "X-CSRF-Token": adminCsrf },
+    headers: { "X-CSRF-Token": primaryCsrf },
     body: {
-      currentPassword: "admin-password-that-is-long",
-      newPassword: "new-admin-password-that-is-long"
+      currentPassword: "primary-password-that-is-long",
+      newPassword: "new-primary-password-that-is-long"
     }
   });
   assert.equal(result.response.status, 200);
 
-  result = await request(admin, "/api/lock", {
+  result = await request(primary, "/api/lock", {
     method: "POST",
-    headers: { "X-CSRF-Token": adminCsrf },
+    headers: { "X-CSRF-Token": primaryCsrf },
     body: {}
   });
   assert.equal(result.response.status, 200);
 
-  result = await request(admin, "/api/unlock", {
+  result = await request(primary, "/api/unlock", {
     method: "POST",
-    body: { username: "admin", password: "new-admin-password-that-is-long" }
+    body: { username: "primary", password: "new-primary-password-that-is-long" }
   });
   assert.equal(result.response.status, 200);
 
   await new Promise((resolve) => setTimeout(resolve, 3200));
-  result = await request(admin, "/api/notes");
+  result = await request(primary, "/api/notes");
   assert.equal(result.response.status, 401);
-  result = await request(admin, "/api/unlock", {
+  result = await request(primary, "/api/unlock", {
     method: "POST",
-    body: { username: "admin", password: "new-admin-password-that-is-long" }
+    body: { username: "primary", password: "new-primary-password-that-is-long" }
   });
   assert.equal(result.response.status, 200);
 
   const database = new DatabaseSync(databasePath);
   const row = database
     .prepare("SELECT ciphertext FROM notes WHERE id = ?")
-    .get(adminNote.id);
+    .get(primaryNote.id);
   const tampered = Buffer.from(row.ciphertext);
   tampered[0] ^= 0xff;
   database
     .prepare("UPDATE notes SET ciphertext = ? WHERE id = ?")
-    .run(tampered, adminNote.id);
+    .run(tampered, primaryNote.id);
   database.close();
 
-  result = await request(admin, "/api/notes");
+  result = await request(primary, "/api/notes");
   assert.equal(result.response.status, 500);
   assert.equal(result.data.error, "data_integrity_error");
   assert.equal(JSON.stringify(result.data).includes("SEGREDO"), false);

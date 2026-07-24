@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import { SCRYPT_PARAMS, type ScryptParameters } from "./crypto";
 import { SessionManager } from "./sessions";
@@ -9,7 +8,6 @@ const DEFAULT_SESSION_IDLE_MS = 15 * 60 * 1000;
 interface Runtime {
   vault: Vault;
   sessions: SessionManager;
-  setupToken: string;
   secureCookies: boolean;
   idleTimeoutMs: number;
 }
@@ -20,7 +18,6 @@ declare global {
 
 export function getRuntime(options?: {
   databasePath?: string;
-  setupToken?: string;
   sessionIdleMs?: number;
   kdfParameters?: ScryptParameters;
 }) {
@@ -34,7 +31,6 @@ export function getRuntime(options?: {
 
 function createRuntime(options?: {
   databasePath?: string;
-  setupToken?: string;
   sessionIdleMs?: number;
   kdfParameters?: ScryptParameters;
 }): Runtime {
@@ -46,9 +42,6 @@ function createRuntime(options?: {
   return {
     vault: new Vault(databasePath, options?.kdfParameters ?? SCRYPT_PARAMS),
     sessions: new SessionManager(idleTimeoutMs),
-    setupToken:
-      options?.setupToken ??
-      loadSecret("NOTES_ADMIN_SETUP_TOKEN_FILE", "NOTES_ADMIN_SETUP_TOKEN"),
     secureCookies: process.env.NOTES_HTTPS === "1",
     idleTimeoutMs
   };
@@ -64,10 +57,4 @@ function configuredIdleTimeout() {
     throw new Error("NOTES_IDLE_MINUTES deve estar entre 0.05 e 1440.");
   }
   return Math.round(minutes * 60 * 1000);
-}
-
-function loadSecret(fileVariable: string, valueVariable: string) {
-  const filename = process.env[fileVariable];
-  if (filename) return fs.readFileSync(filename, "utf8").trim();
-  return (process.env[valueVariable] ?? "").trim();
 }

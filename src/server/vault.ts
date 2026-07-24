@@ -9,12 +9,11 @@ import {
   derivePasswordKey,
   encryptAttachment,
   encryptNote,
-  hashToken,
   unwrapDataKey,
   wrapDataKey,
   type ScryptParameters
 } from "./crypto";
-import { openDatabase, transaction } from "./db";
+import { openDatabase } from "./db";
 import { HttpError } from "./errors";
 import type {
   AttachmentMetadata,
@@ -23,18 +22,10 @@ import type {
   DecryptedNote,
   NotePayload,
   NoteRow,
-  UserRole,
   UserRow
 } from "./types";
 
 const MAX_ATTACHMENTS_PER_NOTE_BYTES = 500 * 1024 * 1024;
-
-interface InviteRow {
-  id: string;
-  expires_at: string;
-  consumed_at: string | null;
-  created_at: string;
-}
 
 export class Vault {
   readonly database: DatabaseSync;
@@ -46,7 +37,6 @@ export class Vault {
   ) {
     this.database = openDatabase(databasePath);
     this.statements = {
-      countUsers: this.database.prepare("SELECT COUNT(*) AS count FROM users"),
       findUser: this.database.prepare("SELECT * FROM users WHERE username = ?"),
       insertUser: this.database.prepare(`
         INSERT INTO users (
@@ -98,37 +88,15 @@ export class Vault {
       `),
       deleteAttachment: this.database.prepare(
         "DELETE FROM attachments WHERE id = ? AND user_id = ?"
-      ),
-      insertInvite: this.database.prepare(`
-        INSERT INTO invites (
-          id, token_hash, created_by, expires_at, consumed_at, consumed_by, created_at
-        ) VALUES (?, ?, ?, ?, NULL, NULL, ?)
-      `),
-      findInvite: this.database.prepare(`
-        SELECT * FROM invites
-        WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > ?
-      `),
-      consumeInvite: this.database.prepare(`
-        UPDATE invites SET consumed_at = ?, consumed_by = ?
-        WHERE id = ? AND consumed_at IS NULL AND expires_at > ?
-      `),
-      listInvites: this.database.prepare(`
-        SELECT id, expires_at, consumed_at, consumed_by, created_at
-        FROM invites WHERE created_by = ? ORDER BY created_at DESC LIMIT 50
-      `)
+      )
     };
-  }
-
-  userCount() {
-    const row = this.statements.countUsers.get() as { count: number | bigint };
-    return Number(row.count);
   }
 
   findUser(username: string) {
     return this.statements.findUser.get(username) as unknown as UserRow | undefined;
   }
 
-  private async buildUser(username: string, password: string, role: UserRole) {
+  private async buildUser(username: string, password: string) {
     const id = crypto.randomUUID();
     const salt = crypto.randomBytes(32);
     const passwordKey = await derivePasswordKey(password, salt, this.kdfParameters);
@@ -139,7 +107,7 @@ export class Vault {
     const user: UserRow = {
       id,
       username,
-      role,
+      role: "user",
       kdf_salt: salt,
       kdf_n: this.kdfParameters.N,
       kdf_r: this.kdfParameters.r,
@@ -172,40 +140,10 @@ export class Vault {
     );
   }
 
-  async bootstrap(username: string, password: string) {
-    const created = await this.buildUser(username, password, "admin");
+  async register(username: string, password: string) {
+    const created = await this.buildUser(username, password);
     try {
-      transaction(this.database, () => {
-        if (this.userCount() !== 0) throw new HttpError(409, "Sistema já configurado.");
-        this.insertUser(created.user);
-      });
-      return created;
-    } catch (error) {
-      created.dataKey.fill(0);
-      throw error;
-    }
-  }
-
-  async register(inviteToken: string, username: string, password: string) {
-    const now = new Date().toISOString();
-    const invite = this.statements.findInvite.get(hashToken(inviteToken), now) as
-      | { id: string }
-      | undefined;
-    if (!invite) throw new HttpError(403, "Convite inválido ou expirado.");
-    const created = await this.buildUser(username, password, "user");
-    try {
-      transaction(this.database, () => {
-        this.insertUser(created.user);
-        const consumed = this.statements.consumeInvite.run(
-          now,
-          created.user.id,
-          invite.id,
-          now
-        );
-        if (Number(consumed.changes) !== 1) {
-          throw new HttpError(409, "O convite já foi utilizado.");
-        }
-      });
+      this.insertUser(created.user);
       return created;
     } catch (error) {
       created.dataKey.fill(0);
@@ -489,27 +427,4 @@ export class Vault {
     if (Number(result.changes) !== 1) throw new HttpError(404, "Anexo não encontrado.");
   }
 
-  createInvite(userId: string) {
-    const token = crypto.randomBytes(32).toString("base64url");
-    const now = new Date();
-    const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    this.statements.insertInvite.run(
-      crypto.randomUUID(),
-      hashToken(token),
-      userId,
-      expires.toISOString(),
-      now.toISOString()
-    );
-    return { token, expiresAt: expires.toISOString() };
-  }
-
-  listInvites(userId: string) {
-    const rows = this.statements.listInvites.all(userId) as unknown as InviteRow[];
-    return rows.map((invite) => ({
-      id: invite.id,
-      expiresAt: invite.expires_at,
-      consumedAt: invite.consumed_at,
-      createdAt: invite.created_at
-    }));
-  }
 }

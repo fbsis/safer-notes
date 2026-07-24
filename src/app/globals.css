@@ -545,28 +545,6 @@ p {
   color: #263244;
 }
 
-.invite-result {
-  display: grid;
-  gap: 0.7rem;
-  padding: 1rem;
-  background: #f3f5f8;
-  border-radius: 9px;
-}
-
-.invite-list {
-  display: grid;
-  gap: 0.5rem;
-  max-height: 220px;
-  overflow: auto;
-}
-
-.invite-row {
-  padding: 0.65rem;
-  border: 1px solid #dde2ea;
-  border-radius: 8px;
-  font-size: 0.9rem;
-}
-
 @media (max-width: 760px) {
   .topbar {
     align-items: flex-start;

@@ -54,10 +54,7 @@ export default function NotesApp() {
   const [collapsedIds, setCollapsedIds] = useState(() => new Set());
   const [idleTimeoutMs, setIdleTimeoutMs] = useState(15 * 60 * 1000);
   const [saveStatus, setSaveStatus] = useState("Salvo");
-  const [adminOpen, setAdminOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
-  const [invites, setInvites] = useState([]);
-  const [inviteLink, setInviteLink] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -115,10 +112,6 @@ export default function NotesApp() {
           setUser(status.user);
           setScreen("vault");
           await loadNotes();
-        } else if (status.bootstrapRequired) {
-          setScreen("bootstrap");
-        } else if (new URLSearchParams(location.search).has("invite")) {
-          setScreen("register");
         } else {
           setScreen("login");
         }
@@ -258,10 +251,6 @@ export default function NotesApp() {
       return;
     }
     const body = { username: values.username, password: values.password };
-    if (endpoint === "/api/bootstrap") body.setupToken = values.setupToken;
-    if (endpoint === "/api/register") {
-      body.inviteToken = new URLSearchParams(location.search).get("invite") || "";
-    }
     try {
       const result = await requestApi(endpoint, { method: "POST", body });
       setCsrfToken(result.csrfToken);
@@ -536,34 +525,6 @@ export default function NotesApp() {
     };
   }, [handleLocked, idleTimeoutMs, screen]);
 
-  async function openInvites() {
-    setAdminOpen(true);
-    setInviteLink("");
-    try {
-      const result = await requestApi("/api/invites");
-      setInvites(result.invites);
-    } catch (error) {
-      setVaultMessage({ text: error.message });
-    }
-  }
-
-  async function createInvite() {
-    try {
-      const result = await requestApi("/api/invites", {
-        method: "POST",
-        csrfToken,
-        body: {}
-      });
-      const url = new URL(location.origin);
-      url.searchParams.set("invite", result.token);
-      setInviteLink(url.toString());
-      const refreshed = await requestApi("/api/invites");
-      setInvites(refreshed.invites);
-    } catch (error) {
-      setVaultMessage({ text: error.message });
-    }
-  }
-
   async function changePassword(event) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -604,10 +565,6 @@ export default function NotesApp() {
             <div><h1>Cofre de notas</h1><p>Suas notas permanecem criptografadas no disco.</p></div>
           </div>
           <Message value={message} />
-          {screen === "bootstrap" && (
-            <AuthForm title="Configuração inicial" submit="Criar cofre administrativo"
-              setup onSubmit={(event) => authenticate(event, "/api/bootstrap")} />
-          )}
           {screen === "register" && (
             <AuthForm title="Criar cofre" submit="Criar meu cofre" confirm
               onSubmit={(event) => authenticate(event, "/api/register")}>
@@ -618,7 +575,11 @@ export default function NotesApp() {
           )}
           {screen === "login" && (
             <AuthForm title="Desbloquear" submit="Abrir cofre"
-              onSubmit={(event) => authenticate(event, "/api/unlock")} />
+              onSubmit={(event) => authenticate(event, "/api/unlock")}>
+              <button type="button" className="secondary" onClick={() => {
+                setScreen("register"); setMessage(null);
+              }}>Criar novo cofre</button>
+            </AuthForm>
           )}
         </section>
       </main>
@@ -634,7 +595,6 @@ export default function NotesApp() {
             <strong>{selected?.title || "Cofre de notas"}</strong>
           </div>
           <nav>
-            {user?.role === "admin" && <button className="secondary" onClick={openInvites}>Convites</button>}
             <button className="secondary" onClick={() => setPasswordOpen(true)}>Trocar senha</button>
             <button className="danger" onClick={() => lock()}>Bloquear</button>
           </nav>
@@ -751,20 +711,6 @@ export default function NotesApp() {
           </section>
         </div>
       </section>
-      {adminOpen && (
-        <Modal title="Convites" onClose={() => setAdminOpen(false)}>
-          <p>O convite vale por 24 horas e só pode ser usado uma vez.</p>
-          <button onClick={createInvite}>Gerar convite</button>
-          {inviteLink && <div className="invite-result"><input value={inviteLink} readOnly />
-            <button className="secondary" onClick={() => navigator.clipboard.writeText(inviteLink)}>Copiar link</button>
-          </div>}
-          <div className="invite-list">{invites.map((invite) => {
-            const status = invite.consumedAt ? "Utilizado" :
-              new Date(invite.expiresAt) <= new Date() ? "Expirado" : "Pendente";
-            return <div className="invite-row" key={invite.id}>{status} · criado em {new Date(invite.createdAt).toLocaleString()}</div>;
-          })}</div>
-        </Modal>
-      )}
       {passwordOpen && (
         <Modal title="Trocar senha" onClose={() => setPasswordOpen(false)}>
           <form className="stack" onSubmit={changePassword}>
@@ -780,12 +726,10 @@ export default function NotesApp() {
   );
 }
 
-function AuthForm({ title, submit, setup = false, children, onSubmit }) {
+function AuthForm({ title, submit, children, onSubmit }) {
   return (
     <form className="stack" onSubmit={onSubmit}>
       <h2>{title}</h2>
-      {setup && <><p>Crie o primeiro administrador. Não existe recuperação de senha.</p>
-        <label>Token de configuração<input name="setupToken" type="password" required /></label></>}
       <label>Usuário<input name="username" autoComplete="username" required autoFocus /></label>
       <label>Senha mestra<input name="password" type="password" minLength={12} required /></label>
       {title !== "Desbloquear" &&

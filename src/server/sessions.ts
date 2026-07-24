@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { HttpError } from "./errors";
 import { safeEqualText } from "./crypto";
-import type { UserRole, UserRow } from "./types";
+import type { UserRow } from "./types";
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_FAILURES = 5;
@@ -10,7 +10,6 @@ export interface Session {
   token: string;
   userId: string;
   username: string;
-  role: UserRole;
   dataKey: Buffer;
   csrfToken: string;
   lastActivity: number;
@@ -34,12 +33,11 @@ export class SessionManager {
     this.sessions.set(token, {
       userId: user.id,
       username: user.username,
-      role: user.role,
       dataKey: sessionKey,
       csrfToken,
       lastActivity: Date.now()
     });
-    return { token, csrfToken, user: { username: user.username, role: user.role } };
+    return { token, csrfToken, user: { username: user.username } };
   }
 
   get(request: Request, touch = true): Session | null {

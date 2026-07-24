@@ -68,18 +68,11 @@ export function openDatabase(filename: string) {
     CREATE INDEX IF NOT EXISTS attachments_note_user
       ON attachments(note_id, user_id, created_at);
 
-    CREATE TABLE IF NOT EXISTS invites (
-      id TEXT PRIMARY KEY,
-      token_hash BLOB NOT NULL UNIQUE,
-      created_by TEXT NOT NULL REFERENCES users(id),
-      expires_at TEXT NOT NULL,
-      consumed_at TEXT,
-      consumed_by TEXT REFERENCES users(id),
-      created_at TEXT NOT NULL
-    ) STRICT;
-
-    CREATE INDEX IF NOT EXISTS invites_expiry ON invites(expires_at);
   `);
+
+  // A coluna permanece para compatibilidade com bancos antigos, mas não
+  // concede privilégios: todas as contas têm exatamente as mesmas operações.
+  database.exec("UPDATE users SET role = 'user' WHERE role <> 'user'");
 
   const noteColumns = database.prepare("PRAGMA table_info(notes)").all() as Array<{
     name: string;
