@@ -51,6 +51,7 @@ export default function NotesApp() {
   const [notes, setNotes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [collapsedIds, setCollapsedIds] = useState(() => new Set());
+  const [idleTimeoutMs, setIdleTimeoutMs] = useState(15 * 60 * 1000);
   const [saveStatus, setSaveStatus] = useState("Salvo");
   const [adminOpen, setAdminOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -65,6 +66,8 @@ export default function NotesApp() {
   const saveTimer = useRef(null);
   const saving = useRef(false);
   const pendingSave = useRef(false);
+  const locking = useRef(false);
+  const lockActionRef = useRef(null);
   const notesRef = useRef(notes);
   const selectedIdRef = useRef(selectedId);
   const csrfRef = useRef(csrfToken);
@@ -75,7 +78,7 @@ export default function NotesApp() {
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   useEffect(() => { csrfRef.current = csrfToken; }, [csrfToken]);
 
-  const handleLocked = useCallback(() => {
+  const handleLocked = useCallback((text = "A sessão foi bloqueada. Informe a senha novamente.") => {
     setCsrfToken("");
     setUser(null);
     setNotes([]);
@@ -83,7 +86,7 @@ export default function NotesApp() {
     setCollapsedIds(new Set());
     setAttachments([]);
     setScreen("login");
-    setMessage({ text: "A sessão foi bloqueada. Informe a senha novamente." });
+    setMessage({ text });
   }, []);
 
   const loadNotes = useCallback(async (preferredId) => {
@@ -101,6 +104,9 @@ export default function NotesApp() {
     requestApi("/api/status")
       .then(async (status) => {
         if (cancelled) return;
+        if (Number.isFinite(status.idleTimeoutMs)) {
+          setIdleTimeoutMs(status.idleTimeoutMs);
+        }
         if (status.authenticated) {
           setCsrfToken(status.csrfToken);
           setUser(status.user);
@@ -259,6 +265,10 @@ export default function NotesApp() {
       setScreen("vault");
       form.reset();
       if (endpoint === "/api/register") history.replaceState(null, "", "/");
+      const status = await requestApi("/api/status");
+      if (Number.isFinite(status.idleTimeoutMs)) {
+        setIdleTimeoutMs(status.idleTimeoutMs);
+      }
       await loadNotes();
     } catch (error) {
       setMessage({ text: error.message });
@@ -418,14 +428,80 @@ export default function NotesApp() {
     }
   }
 
-  async function lock() {
+  async function lock({ inactive = false } = {}) {
+    if (locking.current) return;
+    locking.current = true;
     await flushSave();
     try {
       await requestApi("/api/lock", { method: "POST", csrfToken, body: {} });
     } finally {
-      handleLocked();
+      locking.current = false;
+      handleLocked(
+        inactive
+          ? `Cofre bloqueado após ${formatIdleDuration(idleTimeoutMs)} sem atividade. Informe a senha novamente.`
+          : undefined
+      );
     }
   }
+  lockActionRef.current = lock;
+
+  useEffect(() => {
+    if (screen !== "vault") return;
+
+    let lastActivity = Date.now();
+    let lastPointerSignal = 0;
+    let idleTimer;
+    const heartbeatMs = Math.max(1000, Math.min(60 * 1000, idleTimeoutMs / 3));
+
+    const checkIdle = () => {
+      const remaining = idleTimeoutMs - (Date.now() - lastActivity);
+      if (remaining <= 0) {
+        void lockActionRef.current?.({ inactive: true });
+        return;
+      }
+      idleTimer = setTimeout(checkIdle, remaining);
+    };
+
+    const markActivity = (event) => {
+      const now = Date.now();
+      if (event.type === "pointermove" && now - lastPointerSignal < 500) return;
+      if (event.type === "pointermove") lastPointerSignal = now;
+      lastActivity = now;
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(checkIdle, idleTimeoutMs);
+    };
+
+    const checkVisibility = () => {
+      if (document.visibilityState === "visible") checkIdle();
+    };
+
+    const events = ["keydown", "pointerdown", "pointermove", "touchstart", "wheel"];
+    for (const event of events) {
+      window.addEventListener(event, markActivity, { capture: true, passive: true });
+    }
+    document.addEventListener("visibilitychange", checkVisibility);
+    idleTimer = setTimeout(checkIdle, idleTimeoutMs);
+
+    const heartbeat = setInterval(() => {
+      if (Date.now() - lastActivity >= idleTimeoutMs) return;
+      requestApi("/api/status")
+        .then((status) => {
+          if (!status.authenticated) {
+            handleLocked("A sessão expirou. Informe a senha novamente.");
+          }
+        })
+        .catch(() => {});
+    }, heartbeatMs);
+
+    return () => {
+      clearTimeout(idleTimer);
+      clearInterval(heartbeat);
+      for (const event of events) {
+        window.removeEventListener(event, markActivity, { capture: true });
+      }
+      document.removeEventListener("visibilitychange", checkVisibility);
+    };
+  }, [handleLocked, idleTimeoutMs, screen]);
 
   async function openInvites() {
     setAdminOpen(true);
@@ -524,7 +600,7 @@ export default function NotesApp() {
           <nav>
             {user?.role === "admin" && <button className="secondary" onClick={openInvites}>Convites</button>}
             <button className="secondary" onClick={() => setPasswordOpen(true)}>Trocar senha</button>
-            <button className="danger" onClick={lock}>Bloquear</button>
+            <button className="danger" onClick={() => lock()}>Bloquear</button>
           </nav>
         </header>
         <Message value={vaultMessage} />
@@ -704,6 +780,12 @@ function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function formatIdleDuration(milliseconds) {
+  const minutes = milliseconds / (60 * 1000);
+  if (minutes < 1) return `${Math.round(milliseconds / 1000)} segundos`;
+  return `${Number.isInteger(minutes) ? minutes : minutes.toFixed(1)} minutos`;
 }
 
 function collectDescendantIds(notes, parentId) {
