@@ -28,10 +28,24 @@ como um arquivo `.md` legível no volume. Notas da versão anterior, armazenadas
 como Quill Delta, continuam abrindo e são convertidas para Markdown no próximo
 salvamento.
 
+Imagens e arquivos podem ser adicionados pelo botão abaixo do editor. Cada
+anexo é salvo na tabela `attachments`, vinculado à nota e ao usuário. Nome,
+tipo MIME e conteúdo usam campos criptografados separados, permitindo listar os
+anexos sem descriptografar os bytes do arquivo.
+
+- PNG, JPEG, GIF, WebP e AVIF são exibidos dentro do editor;
+- os demais tipos aparecem como links e são baixados como
+  `application/octet-stream`;
+- o limite é de 10 MiB por arquivo e 100 MiB de anexos por nota;
+- excluir uma nota remove seus anexos em cascata;
+- excluir um anexo pela lista também remove suas referências do conteúdo.
+
 ## Garantias e limites
 
 - Título e conteúdo são criptografados com AES-256-GCM antes de chegarem ao
   SQLite.
+- Metadados e bytes dos anexos também são criptografados com AES-256-GCM e
+  associados criptograficamente ao usuário, à nota e ao identificador do anexo.
 - Cada usuário possui uma chave de dados própria, protegida por uma chave
   derivada da senha com `scrypt`.
 - Senhas e chaves abertas não são persistidas.
