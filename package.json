@@ -14,10 +14,13 @@
     "node": ">=24.15.0"
   },
   "dependencies": {
+    "dompurify": "^3.4.12",
+    "marked": "^18.0.7",
     "next": "16.2.11",
     "quill": "2.0.2",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "turndown": "^7.2.4"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
