@@ -27,7 +27,8 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PORT=3001 \
     NOTES_DB=/app/data/notes.sqlite \
-    NOTES_HTTPS=0
+    NOTES_HTTPS=0 \
+    NOTES_IDLE_MINUTES=15
 
 WORKDIR /app
 

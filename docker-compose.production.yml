@@ -36,6 +36,7 @@ services:
       NOTES_DB: /app/data/notes.sqlite
       NOTES_ADMIN_SETUP_TOKEN_FILE: /run/notes-secrets/admin-setup-token
       NOTES_HTTPS: ${NOTES_HTTPS:-0}
+      NOTES_IDLE_MINUTES: ${NOTES_IDLE_MINUTES:-15}
     volumes:
       - notes_data:/app/data
       - notes_secrets:/run/notes-secrets:ro

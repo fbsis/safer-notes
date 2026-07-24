@@ -52,7 +52,8 @@ async function startNext(databasePath, setupToken) {
         NODE_ENV: "production",
         NEXT_TELEMETRY_DISABLED: "1",
         NOTES_DB: databasePath,
-        NOTES_ADMIN_SETUP_TOKEN: setupToken
+        NOTES_ADMIN_SETUP_TOKEN: setupToken,
+        NOTES_IDLE_MINUTES: "0.05"
       },
       stdio: ["ignore", "pipe", "pipe"]
     }
@@ -115,12 +116,14 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   });
 
   const admin = createClient(server.baseUrl);
+  let result = await request(admin, "/api/status");
+  assert.equal(result.data.idleTimeoutMs, 3000);
   const page = await fetch(server.baseUrl);
   assert.equal(page.status, 200);
   assert.match(page.headers.get("content-security-policy"), /strict-dynamic/);
   assert.match(await page.text(), /Cofre de notas/);
 
-  let result = await request(admin, "/api/bootstrap", {
+  result = await request(admin, "/api/bootstrap", {
     method: "POST",
     body: {
       setupToken: "setup-token-for-integration-test",
@@ -395,6 +398,15 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   });
   assert.equal(result.response.status, 200);
 
+  result = await request(admin, "/api/unlock", {
+    method: "POST",
+    body: { username: "admin", password: "new-admin-password-that-is-long" }
+  });
+  assert.equal(result.response.status, 200);
+
+  await new Promise((resolve) => setTimeout(resolve, 3200));
+  result = await request(admin, "/api/notes");
+  assert.equal(result.response.status, 401);
   result = await request(admin, "/api/unlock", {
     method: "POST",
     body: { username: "admin", password: "new-admin-password-that-is-long" }

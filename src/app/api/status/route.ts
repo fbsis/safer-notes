@@ -6,11 +6,12 @@ export const dynamic = "force-dynamic";
 
 export function GET(request: Request) {
   return api(async () => {
-    const { vault, sessions } = getRuntime();
+    const { vault, sessions, idleTimeoutMs } = getRuntime();
     const session = sessions.get(request);
     return json({
       bootstrapRequired: vault.userCount() === 0,
       authenticated: Boolean(session),
+      idleTimeoutMs,
       ...(session
         ? {
             csrfToken: session.csrfToken,
