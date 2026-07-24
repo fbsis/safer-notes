@@ -1,0 +1,339 @@
+import crypto from "node:crypto";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
+import {
+  CRYPTO_VERSION,
+  SCRYPT_PARAMS,
+  decryptNote,
+  derivePasswordKey,
+  encryptNote,
+  hashToken,
+  unwrapDataKey,
+  wrapDataKey,
+  type ScryptParameters
+} from "./crypto";
+import { openDatabase, transaction } from "./db";
+import { HttpError } from "./errors";
+import type { DecryptedNote, NotePayload, NoteRow, UserRole, UserRow } from "./types";
+
+interface InviteRow {
+  id: string;
+  expires_at: string;
+  consumed_at: string | null;
+  created_at: string;
+}
+
+export class Vault {
+  readonly database: DatabaseSync;
+  private readonly statements: Record<string, StatementSync>;
+
+  constructor(
+    databasePath: string,
+    private readonly kdfParameters: ScryptParameters = SCRYPT_PARAMS
+  ) {
+    this.database = openDatabase(databasePath);
+    this.statements = {
+      countUsers: this.database.prepare("SELECT COUNT(*) AS count FROM users"),
+      findUser: this.database.prepare("SELECT * FROM users WHERE username = ?"),
+      insertUser: this.database.prepare(`
+        INSERT INTO users (
+          id, username, role, kdf_salt, kdf_n, kdf_r, kdf_p,
+          wrapped_dek, wrap_iv, wrap_tag, crypto_version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `),
+      updatePassword: this.database.prepare(`
+        UPDATE users SET
+          kdf_salt = ?, kdf_n = ?, kdf_r = ?, kdf_p = ?,
+          wrapped_dek = ?, wrap_iv = ?, wrap_tag = ?, updated_at = ?
+        WHERE id = ?
+      `),
+      listNotes: this.database.prepare(
+        "SELECT * FROM notes WHERE user_id = ? ORDER BY updated_at DESC"
+      ),
+      findNote: this.database.prepare("SELECT * FROM notes WHERE id = ? AND user_id = ?"),
+      insertNote: this.database.prepare(`
+        INSERT INTO notes (
+          id, user_id, ciphertext, iv, auth_tag, crypto_version,
+          revision, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `),
+      updateNote: this.database.prepare(`
+        UPDATE notes SET
+          ciphertext = ?, iv = ?, auth_tag = ?, crypto_version = ?,
+          revision = ?, updated_at = ?
+        WHERE id = ? AND user_id = ? AND revision = ?
+      `),
+      deleteNote: this.database.prepare("DELETE FROM notes WHERE id = ? AND user_id = ?"),
+      insertInvite: this.database.prepare(`
+        INSERT INTO invites (
+          id, token_hash, created_by, expires_at, consumed_at, consumed_by, created_at
+        ) VALUES (?, ?, ?, ?, NULL, NULL, ?)
+      `),
+      findInvite: this.database.prepare(`
+        SELECT * FROM invites
+        WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > ?
+      `),
+      consumeInvite: this.database.prepare(`
+        UPDATE invites SET consumed_at = ?, consumed_by = ?
+        WHERE id = ? AND consumed_at IS NULL AND expires_at > ?
+      `),
+      listInvites: this.database.prepare(`
+        SELECT id, expires_at, consumed_at, consumed_by, created_at
+        FROM invites WHERE created_by = ? ORDER BY created_at DESC LIMIT 50
+      `)
+    };
+  }
+
+  userCount() {
+    const row = this.statements.countUsers.get() as { count: number | bigint };
+    return Number(row.count);
+  }
+
+  findUser(username: string) {
+    return this.statements.findUser.get(username) as unknown as UserRow | undefined;
+  }
+
+  private async buildUser(username: string, password: string, role: UserRole) {
+    const id = crypto.randomUUID();
+    const salt = crypto.randomBytes(32);
+    const passwordKey = await derivePasswordKey(password, salt, this.kdfParameters);
+    const dataKey = crypto.randomBytes(32);
+    const wrapped = wrapDataKey(id, dataKey, passwordKey);
+    passwordKey.fill(0);
+    const now = new Date().toISOString();
+    const user: UserRow = {
+      id,
+      username,
+      role,
+      kdf_salt: salt,
+      kdf_n: this.kdfParameters.N,
+      kdf_r: this.kdfParameters.r,
+      kdf_p: this.kdfParameters.p,
+      wrapped_dek: wrapped.ciphertext,
+      wrap_iv: wrapped.iv,
+      wrap_tag: wrapped.tag,
+      crypto_version: CRYPTO_VERSION,
+      created_at: now,
+      updated_at: now
+    };
+    return { user, dataKey };
+  }
+
+  private insertUser(user: UserRow) {
+    this.statements.insertUser.run(
+      user.id,
+      user.username,
+      user.role,
+      user.kdf_salt,
+      user.kdf_n,
+      user.kdf_r,
+      user.kdf_p,
+      user.wrapped_dek,
+      user.wrap_iv,
+      user.wrap_tag,
+      user.crypto_version,
+      user.created_at,
+      user.updated_at
+    );
+  }
+
+  async bootstrap(username: string, password: string) {
+    const created = await this.buildUser(username, password, "admin");
+    try {
+      transaction(this.database, () => {
+        if (this.userCount() !== 0) throw new HttpError(409, "Sistema já configurado.");
+        this.insertUser(created.user);
+      });
+      return created;
+    } catch (error) {
+      created.dataKey.fill(0);
+      throw error;
+    }
+  }
+
+  async register(inviteToken: string, username: string, password: string) {
+    const now = new Date().toISOString();
+    const invite = this.statements.findInvite.get(hashToken(inviteToken), now) as
+      | { id: string }
+      | undefined;
+    if (!invite) throw new HttpError(403, "Convite inválido ou expirado.");
+    const created = await this.buildUser(username, password, "user");
+    try {
+      transaction(this.database, () => {
+        this.insertUser(created.user);
+        const consumed = this.statements.consumeInvite.run(
+          now,
+          created.user.id,
+          invite.id,
+          now
+        );
+        if (Number(consumed.changes) !== 1) {
+          throw new HttpError(409, "O convite já foi utilizado.");
+        }
+      });
+      return created;
+    } catch (error) {
+      created.dataKey.fill(0);
+      if (String((error as Error).message).includes("UNIQUE constraint failed: users.username")) {
+        throw new HttpError(409, "Esse usuário já existe.");
+      }
+      throw error;
+    }
+  }
+
+  async authenticate(username: string, password: string) {
+    const user = this.findUser(username);
+    let passwordKey: Buffer | undefined;
+    try {
+      const salt = user ? user.kdf_salt : crypto.randomBytes(32);
+      const parameters = user
+        ? { N: user.kdf_n, r: user.kdf_r, p: user.kdf_p }
+        : SCRYPT_PARAMS;
+      passwordKey = await derivePasswordKey(password, salt, parameters);
+      if (!user) throw new Error("invalid credentials");
+      return { user, dataKey: unwrapDataKey(user, passwordKey) };
+    } finally {
+      passwordKey?.fill(0);
+    }
+  }
+
+  async changePassword(username: string, currentPassword: string, newPassword: string) {
+    const user = this.findUser(username);
+    if (!user) throw new HttpError(401, "Senha atual inválida.");
+    let oldKey: Buffer | undefined;
+    let dataKey: Buffer | undefined;
+    try {
+      oldKey = await derivePasswordKey(currentPassword, user.kdf_salt, {
+        N: user.kdf_n,
+        r: user.kdf_r,
+        p: user.kdf_p
+      });
+      dataKey = unwrapDataKey(user, oldKey);
+    } catch {
+      throw new HttpError(401, "Senha atual inválida.");
+    } finally {
+      oldKey?.fill(0);
+    }
+
+    let newKey: Buffer | undefined;
+    try {
+      const newSalt = crypto.randomBytes(32);
+      newKey = await derivePasswordKey(newPassword, newSalt, this.kdfParameters);
+      const wrapped = wrapDataKey(user.id, dataKey, newKey);
+      this.statements.updatePassword.run(
+        newSalt,
+        this.kdfParameters.N,
+        this.kdfParameters.r,
+        this.kdfParameters.p,
+        wrapped.ciphertext,
+        wrapped.iv,
+        wrapped.tag,
+        new Date().toISOString(),
+        user.id
+      );
+    } finally {
+      newKey?.fill(0);
+      dataKey?.fill(0);
+    }
+  }
+
+  listNotes(userId: string, dataKey: Uint8Array): DecryptedNote[] {
+    const rows = this.statements.listNotes.all(userId) as unknown as NoteRow[];
+    return rows.map((row) => {
+      try {
+        return {
+          id: row.id,
+          ...decryptNote(dataKey, row),
+          revision: row.revision,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        };
+      } catch {
+        throw new HttpError(
+          500,
+          "Falha ao verificar a integridade dos dados criptografados.",
+          "data_integrity_error"
+        );
+      }
+    });
+  }
+
+  createNote(userId: string, dataKey: Uint8Array, payload: NotePayload): DecryptedNote {
+    const id = crypto.randomUUID();
+    const revision = 1;
+    const encrypted = encryptNote(dataKey, userId, id, revision, payload);
+    const now = new Date().toISOString();
+    this.statements.insertNote.run(
+      id,
+      userId,
+      encrypted.ciphertext,
+      encrypted.iv,
+      encrypted.tag,
+      CRYPTO_VERSION,
+      revision,
+      now,
+      now
+    );
+    return { id, ...payload, revision, createdAt: now, updatedAt: now };
+  }
+
+  updateNote(
+    userId: string,
+    dataKey: Uint8Array,
+    id: string,
+    expectedRevision: number,
+    payload: NotePayload
+  ): DecryptedNote {
+    const revision = expectedRevision + 1;
+    const encrypted = encryptNote(dataKey, userId, id, revision, payload);
+    const now = new Date().toISOString();
+    const result = this.statements.updateNote.run(
+      encrypted.ciphertext,
+      encrypted.iv,
+      encrypted.tag,
+      CRYPTO_VERSION,
+      revision,
+      now,
+      id,
+      userId,
+      expectedRevision
+    );
+    if (Number(result.changes) !== 1) {
+      const exists = this.statements.findNote.get(id, userId);
+      throw new HttpError(
+        exists ? 409 : 404,
+        exists ? "A nota foi modificada em outra sessão." : "Nota não encontrada.",
+        exists ? "revision_conflict" : "not_found"
+      );
+    }
+    return { id, ...payload, revision, updatedAt: now };
+  }
+
+  deleteNote(userId: string, id: string) {
+    const result = this.statements.deleteNote.run(id, userId);
+    if (Number(result.changes) !== 1) throw new HttpError(404, "Nota não encontrada.");
+  }
+
+  createInvite(userId: string) {
+    const token = crypto.randomBytes(32).toString("base64url");
+    const now = new Date();
+    const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    this.statements.insertInvite.run(
+      crypto.randomUUID(),
+      hashToken(token),
+      userId,
+      expires.toISOString(),
+      now.toISOString()
+    );
+    return { token, expiresAt: expires.toISOString() };
+  }
+
+  listInvites(userId: string) {
+    const rows = this.statements.listInvites.all(userId) as unknown as InviteRow[];
+    return rows.map((invite) => ({
+      id: invite.id,
+      expiresAt: invite.expires_at,
+      consumedAt: invite.consumed_at,
+      createdAt: invite.created_at
+    }));
+  }
+}
