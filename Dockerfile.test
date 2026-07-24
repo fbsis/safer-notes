@@ -1,15 +1,19 @@
 FROM node:24.18-bookworm-slim
 
-ENV NODE_ENV=test
+ENV NODE_ENV=test \
+    NEXT_TELEMETRY_DISABLED=1
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts \
+RUN npm ci \
     && npm cache clean --force
 
-COPY notes ./notes
+COPY next.config.ts next-env.d.ts tsconfig.json ./
+COPY src ./src
 COPY test ./test
+
+RUN npm run build
 
 USER node
 

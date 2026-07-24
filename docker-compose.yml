@@ -29,7 +29,7 @@ services:
       setup:
         condition: service_completed_successfully
     environment:
-      HOST: 0.0.0.0
+      HOSTNAME: 0.0.0.0
       PORT: 3001
       NOTES_DB: /app/data/notes.sqlite
       NOTES_ADMIN_SETUP_TOKEN_FILE: /run/notes-secrets/admin-setup-token
