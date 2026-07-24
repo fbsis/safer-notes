@@ -1,6 +1,8 @@
 import { HttpError } from "./errors";
 import type { NotePayload } from "./types";
 
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
 export function normalizeUsername(username: unknown) {
   if (typeof username !== "string") throw new HttpError(400, "Usuário inválido.");
   const normalized = username.trim().normalize("NFKC").toLowerCase();
@@ -34,4 +36,25 @@ export function validateNotePayload(input: unknown): NotePayload {
     throw new HttpError(413, "A nota excede o limite permitido.");
   }
   return payload;
+}
+
+export function validateAttachment(file: File) {
+  if (file.size < 1) throw new HttpError(400, "O arquivo está vazio.");
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    throw new HttpError(413, "O arquivo excede o limite de 10 MiB.");
+  }
+
+  const sourceName = file.name.normalize("NFKC").split(/[\\/]/).pop()?.trim() ?? "";
+  const name = sourceName.replace(/[\u0000-\u001f\u007f]/g, "");
+  if (!name || name.length > 255) {
+    throw new HttpError(400, "Nome de arquivo inválido.");
+  }
+
+  const suppliedType = file.type.trim().toLowerCase();
+  const mimeType = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(
+    suppliedType
+  )
+    ? suppliedType
+    : "application/octet-stream";
+  return { name, mimeType, size: file.size };
 }

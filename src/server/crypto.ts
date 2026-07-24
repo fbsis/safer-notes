@@ -1,5 +1,12 @@
 import crypto from "node:crypto";
-import type { NotePayload, NoteRow, StoredNotePayload, UserRow } from "./types";
+import type {
+  AttachmentMetadata,
+  AttachmentRow,
+  NotePayload,
+  NoteRow,
+  StoredNotePayload,
+  UserRow
+} from "./types";
 
 export const CRYPTO_VERSION = 1;
 const KEY_BYTES = 32;
@@ -104,6 +111,49 @@ export function decryptNote(dataKey: Uint8Array, row: NoteRow): StoredNotePayloa
     `notes:note:v${row.crypto_version}:${row.user_id}:${row.id}:${row.revision}`
   );
   return JSON.parse(plaintext.toString("utf8")) as StoredNotePayload;
+}
+
+export function encryptAttachment(
+  dataKey: Uint8Array,
+  userId: string,
+  noteId: string,
+  attachmentId: string,
+  metadata: AttachmentMetadata,
+  data: Uint8Array
+) {
+  const prefix = `notes:attachment:v${CRYPTO_VERSION}:${userId}:${noteId}:${attachmentId}`;
+  return {
+    metadata: encrypt(
+      dataKey,
+      Buffer.from(JSON.stringify(metadata), "utf8"),
+      `${prefix}:metadata`
+    ),
+    data: encrypt(dataKey, data, `${prefix}:data`)
+  };
+}
+
+export function decryptAttachmentMetadata(
+  dataKey: Uint8Array,
+  row: AttachmentRow
+): AttachmentMetadata {
+  const plaintext = decrypt(
+    dataKey,
+    row.metadata_ciphertext,
+    row.metadata_iv,
+    row.metadata_auth_tag,
+    `notes:attachment:v${row.crypto_version}:${row.user_id}:${row.note_id}:${row.id}:metadata`
+  );
+  return JSON.parse(plaintext.toString("utf8")) as AttachmentMetadata;
+}
+
+export function decryptAttachmentData(dataKey: Uint8Array, row: AttachmentRow) {
+  return decrypt(
+    dataKey,
+    row.data_ciphertext,
+    row.data_iv,
+    row.data_auth_tag,
+    `notes:attachment:v${row.crypto_version}:${row.user_id}:${row.note_id}:${row.id}:data`
+  );
 }
 
 export function hashToken(token: string) {

@@ -144,13 +144,85 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   assert.match(result.data.note.markdown, /- item em Markdown$/);
   adminNote.revision = result.data.note.revision;
 
+  const attachmentSecret = "SEGREDO-ARQUIVO-NAO-DEVE-APARECER";
+  const attachmentForm = new FormData();
+  attachmentForm.set(
+    "file",
+    new File(
+      [attachmentSecret],
+      "SEGREDO-NOME-DO-ARQUIVO.txt",
+      { type: "text/plain" }
+    )
+  );
+  let attachmentResponse = await fetch(
+    `${admin.baseUrl}/api/notes/${adminNote.id}/attachments`,
+    {
+      method: "POST",
+      headers: {
+        Cookie: admin.cookie,
+        "X-CSRF-Token": adminCsrf
+      },
+      body: attachmentForm
+    }
+  );
+  assert.equal(attachmentResponse.status, 201);
+  const attachmentResult = await attachmentResponse.json();
+  const attachment = attachmentResult.attachment;
+  assert.equal(attachment.name, "SEGREDO-NOME-DO-ARQUIVO.txt");
+  assert.equal(attachment.isImage, false);
+
+  const imageBytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64"
+  );
+  const imageForm = new FormData();
+  imageForm.set("file", new File([imageBytes], "pixel.png", { type: "image/png" }));
+  attachmentResponse = await fetch(
+    `${admin.baseUrl}/api/notes/${adminNote.id}/attachments`,
+    {
+      method: "POST",
+      headers: {
+        Cookie: admin.cookie,
+        "X-CSRF-Token": adminCsrf
+      },
+      body: imageForm
+    }
+  );
+  assert.equal(attachmentResponse.status, 201);
+  const imageAttachment = (await attachmentResponse.json()).attachment;
+  assert.equal(imageAttachment.isImage, true);
+
+  result = await request(admin, `/api/notes/${adminNote.id}/attachments`);
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.attachments.length, 2);
+
+  attachmentResponse = await fetch(`${admin.baseUrl}${attachment.url}`, {
+    headers: { Cookie: admin.cookie }
+  });
+  assert.equal(attachmentResponse.status, 200);
+  assert.equal(attachmentResponse.headers.get("content-type"), "application/octet-stream");
+  assert.match(attachmentResponse.headers.get("content-disposition"), /^attachment;/);
+  assert.equal(await attachmentResponse.text(), attachmentSecret);
+
+  attachmentResponse = await fetch(`${admin.baseUrl}${imageAttachment.url}`, {
+    headers: { Cookie: admin.cookie }
+  });
+  assert.equal(attachmentResponse.status, 200);
+  assert.equal(attachmentResponse.headers.get("content-type"), "image/png");
+  assert.match(attachmentResponse.headers.get("content-disposition"), /^inline;/);
+  assert.deepEqual(Buffer.from(await attachmentResponse.arrayBuffer()), imageBytes);
+
   const databaseBytes = fs.readFileSync(databasePath);
   assert.equal(databaseBytes.includes(Buffer.from("SEGREDO-TITULO")), false);
   assert.equal(databaseBytes.includes(Buffer.from("SEGREDO-CONTEUDO")), false);
+  assert.equal(databaseBytes.includes(Buffer.from("SEGREDO-NOME-DO-ARQUIVO")), false);
+  assert.equal(databaseBytes.includes(Buffer.from(attachmentSecret)), false);
   if (fs.existsSync(`${databasePath}-wal`)) {
     const walBytes = fs.readFileSync(`${databasePath}-wal`);
     assert.equal(walBytes.includes(Buffer.from("SEGREDO-TITULO")), false);
     assert.equal(walBytes.includes(Buffer.from("SEGREDO-CONTEUDO")), false);
+    assert.equal(walBytes.includes(Buffer.from("SEGREDO-NOME-DO-ARQUIVO")), false);
+    assert.equal(walBytes.includes(Buffer.from(attachmentSecret)), false);
   }
 
   result = await request(admin, "/api/invites", {
@@ -182,6 +254,21 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     headers: { "X-CSRF-Token": userCsrf }
   });
   assert.equal(result.response.status, 404);
+
+  attachmentResponse = await fetch(`${user.baseUrl}${attachment.url}`, {
+    headers: { Cookie: user.cookie }
+  });
+  assert.equal(attachmentResponse.status, 404);
+
+  result = await request(admin, `/api/attachments/${attachment.id}`, {
+    method: "DELETE",
+    headers: { "X-CSRF-Token": adminCsrf }
+  });
+  assert.equal(result.response.status, 204);
+  attachmentResponse = await fetch(`${admin.baseUrl}${attachment.url}`, {
+    headers: { Cookie: admin.cookie }
+  });
+  assert.equal(attachmentResponse.status, 404);
 
   result = await request(admin, "/api/password", {
     method: "POST",

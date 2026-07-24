@@ -3,8 +3,11 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import {
   CRYPTO_VERSION,
   SCRYPT_PARAMS,
+  decryptAttachmentData,
+  decryptAttachmentMetadata,
   decryptNote,
   derivePasswordKey,
+  encryptAttachment,
   encryptNote,
   hashToken,
   unwrapDataKey,
@@ -13,7 +16,18 @@ import {
 } from "./crypto";
 import { openDatabase, transaction } from "./db";
 import { HttpError } from "./errors";
-import type { DecryptedNote, NotePayload, NoteRow, UserRole, UserRow } from "./types";
+import type {
+  AttachmentMetadata,
+  AttachmentRow,
+  DecryptedAttachment,
+  DecryptedNote,
+  NotePayload,
+  NoteRow,
+  UserRole,
+  UserRow
+} from "./types";
+
+const MAX_ATTACHMENTS_PER_NOTE_BYTES = 100 * 1024 * 1024;
 
 interface InviteRow {
   id: string;
@@ -63,6 +77,28 @@ export class Vault {
         WHERE id = ? AND user_id = ? AND revision = ?
       `),
       deleteNote: this.database.prepare("DELETE FROM notes WHERE id = ? AND user_id = ?"),
+      insertAttachment: this.database.prepare(`
+        INSERT INTO attachments (
+          id, note_id, user_id,
+          metadata_ciphertext, metadata_iv, metadata_auth_tag,
+          data_ciphertext, data_iv, data_auth_tag,
+          crypto_version, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `),
+      listAttachments: this.database.prepare(`
+        SELECT * FROM attachments
+        WHERE note_id = ? AND user_id = ? ORDER BY created_at
+      `),
+      findAttachment: this.database.prepare(
+        "SELECT * FROM attachments WHERE id = ? AND user_id = ?"
+      ),
+      attachmentBytes: this.database.prepare(`
+        SELECT COALESCE(SUM(length(data_ciphertext)), 0) AS bytes
+        FROM attachments WHERE note_id = ? AND user_id = ?
+      `),
+      deleteAttachment: this.database.prepare(
+        "DELETE FROM attachments WHERE id = ? AND user_id = ?"
+      ),
       insertInvite: this.database.prepare(`
         INSERT INTO invites (
           id, token_hash, created_by, expires_at, consumed_at, consumed_by, created_at
@@ -311,6 +347,100 @@ export class Vault {
   deleteNote(userId: string, id: string) {
     const result = this.statements.deleteNote.run(id, userId);
     if (Number(result.changes) !== 1) throw new HttpError(404, "Nota não encontrada.");
+  }
+
+  createAttachment(
+    userId: string,
+    dataKey: Uint8Array,
+    noteId: string,
+    metadata: AttachmentMetadata,
+    data: Uint8Array
+  ) {
+    if (!this.statements.findNote.get(noteId, userId)) {
+      throw new HttpError(404, "Nota não encontrada.");
+    }
+    const current = this.statements.attachmentBytes.get(noteId, userId) as {
+      bytes: number | bigint;
+    };
+    if (Number(current.bytes) + data.byteLength > MAX_ATTACHMENTS_PER_NOTE_BYTES) {
+      throw new HttpError(413, "Os anexos desta nota excedem o limite de 100 MiB.");
+    }
+
+    const id = crypto.randomUUID();
+    const encrypted = encryptAttachment(dataKey, userId, noteId, id, metadata, data);
+    const createdAt = new Date().toISOString();
+    this.statements.insertAttachment.run(
+      id,
+      noteId,
+      userId,
+      encrypted.metadata.ciphertext,
+      encrypted.metadata.iv,
+      encrypted.metadata.tag,
+      encrypted.data.ciphertext,
+      encrypted.data.iv,
+      encrypted.data.tag,
+      CRYPTO_VERSION,
+      createdAt
+    );
+    return { id, noteId, ...metadata, createdAt };
+  }
+
+  listAttachments(userId: string, dataKey: Uint8Array, noteId: string) {
+    if (!this.statements.findNote.get(noteId, userId)) {
+      throw new HttpError(404, "Nota não encontrada.");
+    }
+    const rows = this.statements.listAttachments.all(
+      noteId,
+      userId
+    ) as unknown as AttachmentRow[];
+    return rows.map((row) => {
+      try {
+        return {
+          id: row.id,
+          noteId: row.note_id,
+          ...decryptAttachmentMetadata(dataKey, row),
+          createdAt: row.created_at
+        };
+      } catch {
+        throw new HttpError(
+          500,
+          "Falha ao verificar a integridade de um anexo.",
+          "data_integrity_error"
+        );
+      }
+    });
+  }
+
+  getAttachment(
+    userId: string,
+    dataKey: Uint8Array,
+    id: string
+  ): DecryptedAttachment {
+    const row = this.statements.findAttachment.get(
+      id,
+      userId
+    ) as unknown as AttachmentRow | undefined;
+    if (!row) throw new HttpError(404, "Anexo não encontrado.");
+    try {
+      return {
+        id: row.id,
+        noteId: row.note_id,
+        ...decryptAttachmentMetadata(dataKey, row),
+        data: decryptAttachmentData(dataKey, row),
+        createdAt: row.created_at
+      };
+    } catch {
+      throw new HttpError(
+        500,
+        "Falha ao verificar a integridade do anexo.",
+        "data_integrity_error"
+      );
+    }
+  }
+
+  deleteAttachment(userId: string, id: string) {
+    const result = this.statements.deleteAttachment.run(id, userId);
+    if (Number(result.changes) !== 1) throw new HttpError(404, "Anexo não encontrado.");
   }
 
   createInvite(userId: string) {

@@ -28,6 +28,33 @@ export interface NoteRow {
   updated_at: string;
 }
 
+export interface AttachmentRow {
+  id: string;
+  note_id: string;
+  user_id: string;
+  metadata_ciphertext: Uint8Array;
+  metadata_iv: Uint8Array;
+  metadata_auth_tag: Uint8Array;
+  data_ciphertext: Uint8Array;
+  data_iv: Uint8Array;
+  data_auth_tag: Uint8Array;
+  crypto_version: number;
+  created_at: string;
+}
+
+export interface AttachmentMetadata {
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface DecryptedAttachment extends AttachmentMetadata {
+  id: string;
+  noteId: string;
+  data: Buffer;
+  createdAt: string;
+}
+
 export interface DeltaOperation {
   insert?: unknown;
   retain?: number;

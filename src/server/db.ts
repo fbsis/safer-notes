@@ -50,6 +50,23 @@ export function openDatabase(filename: string) {
     CREATE INDEX IF NOT EXISTS notes_user_updated
       ON notes(user_id, updated_at DESC);
 
+    CREATE TABLE IF NOT EXISTS attachments (
+      id TEXT PRIMARY KEY,
+      note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      metadata_ciphertext BLOB NOT NULL,
+      metadata_iv BLOB NOT NULL,
+      metadata_auth_tag BLOB NOT NULL,
+      data_ciphertext BLOB NOT NULL,
+      data_iv BLOB NOT NULL,
+      data_auth_tag BLOB NOT NULL,
+      crypto_version INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE INDEX IF NOT EXISTS attachments_note_user
+      ON attachments(note_id, user_id, created_at);
+
     CREATE TABLE IF NOT EXISTS invites (
       id TEXT PRIMARY KEY,
       token_hash BLOB NOT NULL UNIQUE,
