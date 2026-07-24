@@ -1,0 +1,53 @@
+name: notes
+
+services:
+  setup:
+    image: node:24.18-bookworm-slim
+    user: root
+    restart: "no"
+    volumes:
+      - notes_secrets:/secrets
+    command:
+      - sh
+      - -c
+      - >-
+        if [ ! -s /secrets/admin-setup-token ]; then
+          umask 077;
+          node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))" >/secrets/admin-setup-token;
+          chown 1000:1000 /secrets/admin-setup-token;
+        fi
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+
+  notes:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: notes:production
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+      NOTES_DB: /app/data/notes.sqlite
+      NOTES_ADMIN_SETUP_TOKEN_FILE: /run/notes-secrets/admin-setup-token
+      NOTES_HTTPS: "0"
+    volumes:
+      - notes_data:/app/data
+      - notes_secrets:/run/notes-secrets:ro
+    ports:
+      - "127.0.0.1:3001:3001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+volumes:
+  notes_data:
+  notes_secrets:

@@ -1,0 +1,19 @@
+name: notes-test
+
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    image: notes:test
+    environment:
+      NODE_ENV: test
+    command: ["npm", "test"]
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
