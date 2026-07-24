@@ -276,10 +276,14 @@ export class Vault {
     const rows = this.statements.listNotes.all(userId) as unknown as NoteRow[];
     return rows.map((row) => {
       try {
+        const payload = decryptNote(dataKey, row);
+        if ((payload.parentId ?? null) !== row.parent_id) {
+          throw new Error("note hierarchy integrity mismatch");
+        }
         return {
           id: row.id,
           parentId: row.parent_id,
-          ...decryptNote(dataKey, row),
+          ...payload,
           revision: row.revision,
           createdAt: row.created_at,
           updatedAt: row.updated_at
@@ -303,7 +307,10 @@ export class Vault {
     const id = crypto.randomUUID();
     this.assertValidParent(userId, id, parentId);
     const revision = 1;
-    const encrypted = encryptNote(dataKey, userId, id, revision, payload);
+    const encrypted = encryptNote(dataKey, userId, id, revision, {
+      ...payload,
+      parentId
+    });
     const now = new Date().toISOString();
     this.statements.insertNote.run(
       id,
@@ -330,7 +337,10 @@ export class Vault {
   ): DecryptedNote {
     this.assertValidParent(userId, id, parentId);
     const revision = expectedRevision + 1;
-    const encrypted = encryptNote(dataKey, userId, id, revision, payload);
+    const encrypted = encryptNote(dataKey, userId, id, revision, {
+      ...payload,
+      parentId
+    });
     const now = new Date().toISOString();
     const result = this.statements.updateNote.run(
       parentId,

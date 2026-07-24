@@ -76,6 +76,7 @@ export interface StoredNotePayload {
   title: string;
   markdown?: string;
   delta?: DeltaDocument;
+  parentId?: string | null;
 }
 
 export interface DecryptedNote extends StoredNotePayload {

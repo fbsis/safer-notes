@@ -183,7 +183,20 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     }
   });
   assert.equal(result.response.status, 201);
-  assert.equal(result.data.note.parentId, childNote.id);
+  const grandchildNote = result.data.note;
+  assert.equal(grandchildNote.parentId, childNote.id);
+
+  const hierarchyDatabase = new DatabaseSync(databasePath);
+  hierarchyDatabase
+    .prepare("UPDATE notes SET parent_id = ? WHERE id = ?")
+    .run(adminNote.id, grandchildNote.id);
+  result = await request(admin, "/api/notes");
+  assert.equal(result.response.status, 500);
+  assert.equal(result.data.error, "data_integrity_error");
+  hierarchyDatabase
+    .prepare("UPDATE notes SET parent_id = ? WHERE id = ?")
+    .run(childNote.id, grandchildNote.id);
+  hierarchyDatabase.close();
 
   result = await request(admin, `/api/notes/${adminNote.id}`, {
     method: "PATCH",

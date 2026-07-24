@@ -93,7 +93,7 @@ export function encryptNote(
   userId: string,
   noteId: string,
   revision: number,
-  payload: NotePayload
+  payload: NotePayload & { parentId?: string | null }
 ) {
   return encrypt(
     dataKey,
