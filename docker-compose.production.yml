@@ -1,0 +1,64 @@
+name: notes-production
+
+services:
+  setup:
+    image: node:24.18-bookworm-slim
+    user: root
+    restart: "no"
+    read_only: true
+    network_mode: none
+    volumes:
+      - notes_secrets:/secrets
+    command:
+      - sh
+      - -c
+      - >-
+        if [ ! -s /secrets/admin-setup-token ]; then
+          umask 077;
+          node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))" >/secrets/admin-setup-token;
+          chown 1000:1000 /secrets/admin-setup-token;
+        fi
+    security_opt:
+      - no-new-privileges:true
+
+  notes:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${NOTES_IMAGE:-notes:production}
+    init: true
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+      NOTES_DB: /app/data/notes.sqlite
+      NOTES_ADMIN_SETUP_TOKEN_FILE: /run/notes-secrets/admin-setup-token
+      NOTES_HTTPS: ${NOTES_HTTPS:-0}
+    volumes:
+      - notes_data:/app/data
+      - notes_secrets:/run/notes-secrets:ro
+    ports:
+      - "${NOTES_BIND_ADDRESS:-127.0.0.1}:${NOTES_PORT:-3001}:3001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    mem_limit: 1g
+    cpus: 2
+    stop_grace_period: 15s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  notes_data:
+  notes_secrets:
