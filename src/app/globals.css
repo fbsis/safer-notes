@@ -256,6 +256,27 @@ p {
 .editor-pane {
   padding: 1.25rem;
   min-width: 0;
+  position: relative;
+}
+
+.editor-pane.drag-active {
+  outline: 3px dashed #315efb;
+  outline-offset: -8px;
+}
+
+.drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  background: rgb(49 94 251 / 14%);
+  color: #173fbf;
+  font-size: 1.05rem;
+  font-weight: 750;
+  text-align: center;
+  pointer-events: none;
 }
 
 .editor-heading {
@@ -454,6 +475,11 @@ p {
   .note-item small,
   .editor-heading span {
     color: #aab4c3;
+  }
+
+  .drop-hint {
+    color: #b8c8ff;
+    background: rgb(49 94 251 / 22%);
   }
 
   .note-item {

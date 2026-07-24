@@ -59,6 +59,7 @@ export default function NotesApp() {
   const [inviteLink, setInviteLink] = useState("");
   const [attachments, setAttachments] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const editorElement = useRef(null);
   const fileInput = useRef(null);
   const quill = useRef(null);
@@ -336,9 +337,7 @@ export default function NotesApp() {
     queueSave();
   }
 
-  async function uploadAttachments(event) {
-    const files = Array.from(event.target.files || []);
-    event.target.value = "";
+  async function uploadFiles(files) {
     if (!selected || !quill.current || files.length === 0) return;
     setUploading(true);
     setVaultMessage(null);
@@ -388,6 +387,37 @@ export default function NotesApp() {
     } finally {
       setUploading(false);
     }
+  }
+
+  async function handleEditorDrop(event) {
+    event.preventDefault();
+    setDragActive(false);
+    const files = Array.from(event.dataTransfer.files || []);
+    if (files.length > 0) {
+      await uploadFiles(files);
+      return;
+    }
+
+    const url = readDraggedUrl(event.dataTransfer);
+    if (!url || !quill.current) {
+      setVaultMessage({
+        text: "O item arrastado não contém um link HTTP/HTTPS ou um arquivo válido."
+      });
+      return;
+    }
+
+    const editor = quill.current;
+    const range = editor.getSelection(true) || {
+      index: Math.max(0, editor.getLength() - 1),
+      length: 0
+    };
+    editor.insertText(range.index, url, { link: url }, "user");
+    editor.insertText(range.index + url.length, "\n", "user");
+    await saveCurrentRef.current?.();
+    setVaultMessage({
+      text: "Link inserido e salvo dentro do conteúdo criptografado.",
+      success: true
+    });
   }
 
   async function deleteAttachment(attachment) {
@@ -621,7 +651,26 @@ export default function NotesApp() {
             </div>
           </aside>
           {!selected && <section className="empty-editor">Selecione uma nota ou crie uma nova.</section>}
-          <section className={`editor-pane${selected ? "" : " hidden"}`}>
+          <section className={`editor-pane${selected ? "" : " hidden"}${dragActive ? " drag-active" : ""}`}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setDragActive(true);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = event.dataTransfer.files.length > 0
+                ? "copy"
+                : "link";
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) setDragActive(false);
+            }}
+            onDrop={handleEditorDrop}>
+            {dragActive && (
+              <div className="drop-hint">
+                Solte para criptografar o arquivo ou salvar o link
+              </div>
+            )}
             <div className="editor-heading">
               <div className="page-heading-fields">
                 <input value={selected?.title || ""} maxLength={200} aria-label="Título da nota"
@@ -650,12 +699,16 @@ export default function NotesApp() {
             <div ref={editorElement} className="editor" />
             <div className="attachment-tools">
               <input ref={fileInput} type="file" multiple hidden
-                onChange={uploadAttachments} aria-label="Selecionar anexos" />
+                onChange={(event) => {
+                  const files = Array.from(event.target.files || []);
+                  event.target.value = "";
+                  void uploadFiles(files);
+                }} aria-label="Selecionar anexos" />
               <button className="secondary" disabled={uploading}
                 onClick={() => fileInput.current?.click()}>
                 {uploading ? "Criptografando e enviando…" : "Adicionar imagem ou arquivo"}
               </button>
-              <small>Até 10 MiB por arquivo e 100 MiB por nota.</small>
+              <small>Arraste links ou arquivos. Até 50 MiB por arquivo e 500 MiB por nota.</small>
             </div>
             {attachments.length > 0 && (
               <div className="attachment-list" aria-label="Anexos da nota">
@@ -786,6 +839,21 @@ function formatIdleDuration(milliseconds) {
   const minutes = milliseconds / (60 * 1000);
   if (minutes < 1) return `${Math.round(milliseconds / 1000)} segundos`;
   return `${Number.isInteger(minutes) ? minutes : minutes.toFixed(1)} minutos`;
+}
+
+function readDraggedUrl(dataTransfer) {
+  const uriList = dataTransfer.getData("text/uri-list");
+  const candidate = uriList
+    .split(/\r?\n/)
+    .find((line) => line.trim() && !line.trim().startsWith("#"))
+    || dataTransfer.getData("text/plain").trim();
+  if (!candidate) return null;
+  try {
+    const url = new URL(candidate.trim());
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
 }
 
 function collectDescendantIds(notes, parentId) {
