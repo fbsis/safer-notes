@@ -255,6 +255,47 @@ p {
   margin-top: 1rem;
 }
 
+.attachment-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.attachment-tools small,
+.attachment-row small {
+  color: #718096;
+}
+
+.attachment-list {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+
+.attachment-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #dde2ea;
+  border-radius: 8px;
+  background: white;
+}
+
+.attachment-row a {
+  overflow: hidden;
+  color: #315efb;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-row button {
+  padding: 0.4rem 0.65rem;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -346,6 +387,7 @@ p {
   .sidebar,
   input,
   .editor,
+  .attachment-row,
   .modal-card {
     background: #1b2430;
     color: #e7ebf2;

@@ -55,7 +55,10 @@ export default function NotesApp() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [invites, setInvites] = useState([]);
   const [inviteLink, setInviteLink] = useState("");
+  const [attachments, setAttachments] = useState([]);
+  const [uploading, setUploading] = useState(false);
   const editorElement = useRef(null);
+  const fileInput = useRef(null);
   const quill = useRef(null);
   const loadingEditor = useRef(false);
   const saveTimer = useRef(null);
@@ -76,6 +79,7 @@ export default function NotesApp() {
     setUser(null);
     setNotes([]);
     setSelectedId(null);
+    setAttachments([]);
     setScreen("login");
     setMessage({ text: "A sessão foi bloqueada. Informe a senha novamente." });
   }, []);
@@ -204,6 +208,22 @@ export default function NotesApp() {
     setSaveStatus("Salvo");
   }, [selectedId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setAttachments([]);
+    if (!selectedId || screen !== "vault") return () => { cancelled = true; };
+    requestApi(`/api/notes/${selectedId}/attachments`)
+      .then((result) => {
+        if (!cancelled) setAttachments(result.attachments);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if (error.status === 401) handleLocked();
+        else setVaultMessage({ text: error.message });
+      });
+    return () => { cancelled = true; };
+  }, [handleLocked, screen, selectedId]);
+
   useEffect(() => () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
   }, []);
@@ -269,6 +289,98 @@ export default function NotesApp() {
       const remaining = notes.filter((note) => note.id !== selected.id);
       setNotes(remaining);
       setSelectedId(remaining[0]?.id || null);
+    } catch (error) {
+      if (error.status === 401) handleLocked();
+      else setVaultMessage({ text: error.message });
+    }
+  }
+
+  async function uploadAttachments(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!selected || !quill.current || files.length === 0) return;
+    setUploading(true);
+    setVaultMessage(null);
+    try {
+      for (const file of files) {
+        const form = new FormData();
+        form.set("file", file);
+        const response = await fetch(`/api/notes/${selected.id}/attachments`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": csrfRef.current },
+          body: form
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new ApiError(
+            result.message || "Não foi possível enviar o anexo.",
+            response.status,
+            result.error
+          );
+        }
+
+        const attachment = result.attachment;
+        const range = quill.current.getSelection(true) || {
+          index: Math.max(0, quill.current.getLength() - 1),
+          length: 0
+        };
+        if (attachment.isImage) {
+          quill.current.insertEmbed(range.index, "image", attachment.url, "user");
+          quill.current.insertText(range.index + 1, "\n", "user");
+        } else {
+          const label = `📎 ${attachment.name}`;
+          quill.current.insertText(
+            range.index,
+            label,
+            { link: attachment.url },
+            "user"
+          );
+          quill.current.insertText(range.index + label.length, "\n", "user");
+        }
+        setAttachments((current) => [...current, attachment]);
+      }
+      await saveCurrentRef.current?.();
+      setVaultMessage({ text: "Anexo criptografado e inserido na nota.", success: true });
+    } catch (error) {
+      if (error.status === 401) handleLocked();
+      else setVaultMessage({ text: error.message });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function deleteAttachment(attachment) {
+    if (!confirm(`Excluir definitivamente o anexo “${attachment.name}”?`)) return;
+    try {
+      await requestApi(`/api/attachments/${attachment.id}`, {
+        method: "DELETE",
+        csrfToken
+      });
+      const editor = quill.current;
+      if (editor) {
+        const ranges = [];
+        let index = 0;
+        for (const operation of editor.getContents().ops || []) {
+          const length = typeof operation.insert === "string"
+            ? operation.insert.length
+            : 1;
+          const image = operation.insert?.image;
+          const link = operation.attributes?.link;
+          const attachmentPath = `/api/attachments/${attachment.id}`;
+          if (
+            (typeof image === "string" && image.includes(attachmentPath)) ||
+            (typeof link === "string" && link.includes(attachmentPath))
+          ) {
+            ranges.push({ index, length });
+          }
+          index += length;
+        }
+        for (const range of ranges.reverse()) {
+          editor.deleteText(range.index, range.length, "user");
+        }
+      }
+      setAttachments((current) => current.filter((item) => item.id !== attachment.id));
+      await saveCurrentRef.current?.();
     } catch (error) {
       if (error.status === 401) handleLocked();
       else setVaultMessage({ text: error.message });
@@ -412,6 +524,30 @@ export default function NotesApp() {
               <span>{saveStatus} · Markdown</span>
             </div>
             <div ref={editorElement} className="editor" />
+            <div className="attachment-tools">
+              <input ref={fileInput} type="file" multiple hidden
+                onChange={uploadAttachments} aria-label="Selecionar anexos" />
+              <button className="secondary" disabled={uploading}
+                onClick={() => fileInput.current?.click()}>
+                {uploading ? "Criptografando e enviando…" : "Adicionar imagem ou arquivo"}
+              </button>
+              <small>Até 10 MiB por arquivo e 100 MiB por nota.</small>
+            </div>
+            {attachments.length > 0 && (
+              <div className="attachment-list" aria-label="Anexos da nota">
+                {attachments.map((attachment) => (
+                  <div className="attachment-row" key={attachment.id}>
+                    <a href={attachment.url} target="_blank" rel="noreferrer">
+                      {attachment.isImage ? "Imagem" : "Arquivo"} · {attachment.name}
+                    </a>
+                    <small>{formatBytes(attachment.size)}</small>
+                    <button className="danger" onClick={() => deleteAttachment(attachment)}>
+                      Excluir
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="editor-actions">
               <button className="danger" onClick={deleteNote}>Excluir nota</button>
             </div>
@@ -473,4 +609,10 @@ function Modal({ title, children, onClose }) {
       </section>
     </div>
   );
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
