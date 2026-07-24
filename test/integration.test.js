@@ -91,6 +91,19 @@ async function stopNext(child) {
 }
 
 test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
+  const { readDraggedUrl } = await import("../src/components/drop-utils.mjs");
+  const transfer = (uri, plain = "") => ({
+    getData(type) {
+      return type === "text/uri-list" ? uri : plain;
+    }
+  });
+  assert.equal(
+    readDraggedUrl(transfer("# comentário\nhttps://example.test/private")),
+    "https://example.test/private"
+  );
+  assert.equal(readDraggedUrl(transfer("javascript:alert(1)")), null);
+  assert.equal(readDraggedUrl(transfer("", "data:text/html,danger")), null);
+
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "next-notes-"));
   const databasePath = path.join(directory, "notes.sqlite");
   const legacyDatabase = new DatabaseSync(databasePath);

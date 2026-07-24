@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { readDraggedUrl } from "./drop-utils.mjs";
 import { editorToMarkdown, noteToDelta } from "./markdown-codec";
 
 class ApiError extends Error {
@@ -839,21 +840,6 @@ function formatIdleDuration(milliseconds) {
   const minutes = milliseconds / (60 * 1000);
   if (minutes < 1) return `${Math.round(milliseconds / 1000)} segundos`;
   return `${Number.isInteger(minutes) ? minutes : minutes.toFixed(1)} minutos`;
-}
-
-function readDraggedUrl(dataTransfer) {
-  const uriList = dataTransfer.getData("text/uri-list");
-  const candidate = uriList
-    .split(/\r?\n/)
-    .find((line) => line.trim() && !line.trim().startsWith("#"))
-    || dataTransfer.getData("text/plain").trim();
-  if (!candidate) return null;
-  try {
-    const url = new URL(candidate.trim());
-    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
-  } catch {
-    return null;
-  }
 }
 
 function collectDescendantIds(notes, parentId) {
