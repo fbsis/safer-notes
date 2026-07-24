@@ -1,17 +1,32 @@
 {
   "name": "encrypted-notes",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Cofre local multiusuário de notas criptografadas",
-  "main": "notes/notes.js",
+  "description": "Cofre multiusuário de notas criptografadas em Next.js",
   "scripts": {
-    "start": "node notes/notes.js",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
     "test": "node --test"
   },
   "engines": {
     "node": ">=24.15.0"
   },
   "dependencies": {
-    "quill": "2.0.2"
+    "next": "16.2.11",
+    "quill": "2.0.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "typescript": "6.0.3"
+  },
+  "overrides": {
+    "postcss": "8.5.23",
+    "sharp": "0.35.3"
   }
 }
