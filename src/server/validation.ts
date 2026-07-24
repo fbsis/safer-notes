@@ -1,5 +1,5 @@
 import { HttpError } from "./errors";
-import type { DeltaDocument, NotePayload } from "./types";
+import type { NotePayload } from "./types";
 
 export function normalizeUsername(username: unknown) {
   if (typeof username !== "string") throw new HttpError(400, "Usuário inválido.");
@@ -26,11 +26,10 @@ export function validateNotePayload(input: unknown): NotePayload {
   if (!title || title.length > 200) {
     throw new HttpError(400, "O título precisa ter entre 1 e 200 caracteres.");
   }
-  const delta = candidate.delta as DeltaDocument | undefined;
-  if (!delta || typeof delta !== "object" || !Array.isArray(delta.ops)) {
-    throw new HttpError(400, "Conteúdo Quill Delta inválido.");
+  if (typeof candidate.markdown !== "string") {
+    throw new HttpError(400, "Conteúdo Markdown inválido.");
   }
-  const payload = { title, delta };
+  const payload = { title, markdown: candidate.markdown };
   if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 900 * 1024) {
     throw new HttpError(413, "A nota excede o limite permitido.");
   }

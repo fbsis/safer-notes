@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { NotePayload, NoteRow, UserRow } from "./types";
+import type { NotePayload, NoteRow, StoredNotePayload, UserRow } from "./types";
 
 export const CRYPTO_VERSION = 1;
 const KEY_BYTES = 32;
@@ -95,7 +95,7 @@ export function encryptNote(
   );
 }
 
-export function decryptNote(dataKey: Uint8Array, row: NoteRow): NotePayload {
+export function decryptNote(dataKey: Uint8Array, row: NoteRow): StoredNotePayload {
   const plaintext = decrypt(
     dataKey,
     row.ciphertext,
@@ -103,7 +103,7 @@ export function decryptNote(dataKey: Uint8Array, row: NoteRow): NotePayload {
     row.auth_tag,
     `notes:note:v${row.crypto_version}:${row.user_id}:${row.id}:${row.revision}`
   );
-  return JSON.parse(plaintext.toString("utf8")) as NotePayload;
+  return JSON.parse(plaintext.toString("utf8")) as StoredNotePayload;
 }
 
 export function hashToken(token: string) {

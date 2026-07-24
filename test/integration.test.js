@@ -121,11 +121,28 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     headers: { "X-CSRF-Token": adminCsrf },
     body: {
       title: "SEGREDO-TITULO-NAO-DEVE-APARECER",
-      delta: { ops: [{ insert: "SEGREDO-CONTEUDO-NAO-DEVE-APARECER\n" }] }
+      markdown: "# SEGREDO-CONTEUDO-NAO-DEVE-APARECER\n\nTexto com **negrito**."
     }
   });
   assert.equal(result.response.status, 201);
   const adminNote = result.data.note;
+  assert.equal(
+    adminNote.markdown,
+    "# SEGREDO-CONTEUDO-NAO-DEVE-APARECER\n\nTexto com **negrito**."
+  );
+
+  result = await request(admin, `/api/notes/${adminNote.id}`, {
+    method: "PATCH",
+    headers: { "X-CSRF-Token": adminCsrf },
+    body: {
+      title: adminNote.title,
+      markdown: `${adminNote.markdown}\n\n- item em Markdown`,
+      revision: adminNote.revision
+    }
+  });
+  assert.equal(result.response.status, 200);
+  assert.match(result.data.note.markdown, /- item em Markdown$/);
+  adminNote.revision = result.data.note.revision;
 
   const databaseBytes = fs.readFileSync(databasePath);
   assert.equal(databaseBytes.includes(Buffer.from("SEGREDO-TITULO")), false);

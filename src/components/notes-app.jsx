@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { editorToMarkdown, noteToDelta } from "./markdown-codec";
 
 class ApiError extends Error {
   constructor(message, status, code) {
@@ -125,7 +126,7 @@ export default function NotesApp() {
     const snapshot = {
       id: note.id,
       title: note.title.trim() || "Sem título",
-      delta: quill.current.getContents(),
+      markdown: editorToMarkdown(quill.current),
       revision: note.revision
     };
     try {
@@ -185,7 +186,7 @@ export default function NotesApp() {
       });
       quill.current.on("text-change", queueSave);
       const note = notesRef.current.find((item) => item.id === selectedIdRef.current);
-      if (note) quill.current.setContents(note.delta, "silent");
+      if (note) quill.current.setContents(noteToDelta(quill.current, note), "silent");
     });
     return () => {
       cancelled = true;
@@ -198,7 +199,7 @@ export default function NotesApp() {
     const note = notesRef.current.find((item) => item.id === selectedId);
     if (!note || !quill.current) return;
     loadingEditor.current = true;
-    quill.current.setContents(note.delta, "silent");
+    quill.current.setContents(noteToDelta(quill.current, note), "silent");
     loadingEditor.current = false;
     setSaveStatus("Salvo");
   }, [selectedId]);
@@ -248,7 +249,7 @@ export default function NotesApp() {
       const result = await requestApi("/api/notes", {
         method: "POST",
         csrfToken,
-        body: { title: "Nova nota", delta: { ops: [{ insert: "\n" }] } }
+        body: { title: "Nova nota", markdown: "" }
       });
       setNotes((current) => [result.note, ...current]);
       setSelectedId(result.note.id);
@@ -408,7 +409,7 @@ export default function NotesApp() {
                   ));
                   queueSave();
                 }} />
-              <span>{saveStatus}</span>
+              <span>{saveStatus} · Markdown</span>
             </div>
             <div ref={editorElement} className="editor" />
             <div className="editor-actions">

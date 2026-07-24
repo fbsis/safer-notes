@@ -41,10 +41,16 @@ export interface DeltaDocument {
 
 export interface NotePayload {
   title: string;
-  delta: DeltaDocument;
+  markdown: string;
 }
 
-export interface DecryptedNote extends NotePayload {
+export interface StoredNotePayload {
+  title: string;
+  markdown?: string;
+  delta?: DeltaDocument;
+}
+
+export interface DecryptedNote extends StoredNotePayload {
   id: string;
   revision: number;
   createdAt?: string;
