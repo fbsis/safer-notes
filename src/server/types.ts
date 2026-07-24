@@ -19,6 +19,7 @@ export interface UserRow {
 export interface NoteRow {
   id: string;
   user_id: string;
+  parent_id: string | null;
   ciphertext: Uint8Array;
   iv: Uint8Array;
   auth_tag: Uint8Array;
@@ -79,6 +80,7 @@ export interface StoredNotePayload {
 
 export interface DecryptedNote extends StoredNotePayload {
   id: string;
+  parentId: string | null;
   revision: number;
   createdAt?: string;
   updatedAt: string;

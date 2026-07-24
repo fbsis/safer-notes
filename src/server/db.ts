@@ -38,6 +38,7 @@ export function openDatabase(filename: string) {
     CREATE TABLE IF NOT EXISTS notes (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      parent_id TEXT REFERENCES notes(id) ON DELETE CASCADE,
       ciphertext BLOB NOT NULL,
       iv BLOB NOT NULL,
       auth_tag BLOB NOT NULL,
@@ -78,6 +79,19 @@ export function openDatabase(filename: string) {
     ) STRICT;
 
     CREATE INDEX IF NOT EXISTS invites_expiry ON invites(expires_at);
+  `);
+
+  const noteColumns = database.prepare("PRAGMA table_info(notes)").all() as Array<{
+    name: string;
+  }>;
+  if (!noteColumns.some((column) => column.name === "parent_id")) {
+    database.exec(
+      "ALTER TABLE notes ADD COLUMN parent_id TEXT REFERENCES notes(id) ON DELETE CASCADE"
+    );
+  }
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS notes_parent_user
+      ON notes(parent_id, user_id, updated_at DESC);
   `);
 
   return database;

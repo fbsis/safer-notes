@@ -92,6 +92,21 @@ async function stopNext(child) {
 test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "next-notes-"));
   const databasePath = path.join(directory, "notes.sqlite");
+  const legacyDatabase = new DatabaseSync(databasePath);
+  legacyDatabase.exec(`
+    CREATE TABLE notes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      ciphertext BLOB NOT NULL,
+      iv BLOB NOT NULL,
+      auth_tag BLOB NOT NULL,
+      crypto_version INTEGER NOT NULL,
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;
+  `);
+  legacyDatabase.close();
   const server = await startNext(databasePath, "setup-token-for-integration-test");
 
   t.after(async () => {
@@ -126,6 +141,7 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   });
   assert.equal(result.response.status, 201);
   const adminNote = result.data.note;
+  assert.equal(adminNote.parentId, null);
   assert.equal(
     adminNote.markdown,
     "# SEGREDO-CONTEUDO-NAO-DEVE-APARECER\n\nTexto com **negrito**."
@@ -143,6 +159,74 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   assert.equal(result.response.status, 200);
   assert.match(result.data.note.markdown, /- item em Markdown$/);
   adminNote.revision = result.data.note.revision;
+
+  result = await request(admin, "/api/notes", {
+    method: "POST",
+    headers: { "X-CSRF-Token": adminCsrf },
+    body: {
+      title: "Página filha",
+      markdown: "Conteúdo filho",
+      parentId: adminNote.id
+    }
+  });
+  assert.equal(result.response.status, 201);
+  const childNote = result.data.note;
+  assert.equal(childNote.parentId, adminNote.id);
+
+  result = await request(admin, "/api/notes", {
+    method: "POST",
+    headers: { "X-CSRF-Token": adminCsrf },
+    body: {
+      title: "Página neta",
+      markdown: "Conteúdo neto",
+      parentId: childNote.id
+    }
+  });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.data.note.parentId, childNote.id);
+
+  result = await request(admin, `/api/notes/${adminNote.id}`, {
+    method: "PATCH",
+    headers: { "X-CSRF-Token": adminCsrf },
+    body: {
+      title: adminNote.title,
+      markdown: adminNote.markdown,
+      parentId: childNote.id,
+      revision: adminNote.revision
+    }
+  });
+  assert.equal(result.response.status, 400);
+  assert.equal(result.data.error, "invalid_parent");
+
+  result = await request(admin, "/api/notes", {
+    method: "POST",
+    headers: { "X-CSRF-Token": adminCsrf },
+    body: { title: "Subárvore descartável", markdown: "", parentId: null }
+  });
+  assert.equal(result.response.status, 201);
+  const disposableRoot = result.data.note;
+  result = await request(admin, "/api/notes", {
+    method: "POST",
+    headers: { "X-CSRF-Token": adminCsrf },
+    body: {
+      title: "Filha descartável",
+      markdown: "",
+      parentId: disposableRoot.id
+    }
+  });
+  const disposableChild = result.data.note;
+  result = await request(admin, `/api/notes/${disposableRoot.id}`, {
+    method: "DELETE",
+    headers: { "X-CSRF-Token": adminCsrf }
+  });
+  assert.equal(result.response.status, 204);
+  result = await request(admin, "/api/notes");
+  assert.equal(
+    result.data.notes.some((note) =>
+      note.id === disposableRoot.id || note.id === disposableChild.id
+    ),
+    false
+  );
 
   const attachmentSecret = "SEGREDO-ARQUIVO-NAO-DEVE-APARECER";
   const attachmentForm = new FormData();
@@ -248,6 +332,17 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
 
   result = await request(user, "/api/notes");
   assert.deepEqual(result.data.notes, []);
+
+  result = await request(user, "/api/notes", {
+    method: "POST",
+    headers: { "X-CSRF-Token": userCsrf },
+    body: {
+      title: "Tentativa entre cofres",
+      markdown: "",
+      parentId: adminNote.id
+    }
+  });
+  assert.equal(result.response.status, 404);
 
   result = await request(user, `/api/notes/${adminNote.id}`, {
     method: "DELETE",

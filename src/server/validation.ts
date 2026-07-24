@@ -38,6 +38,14 @@ export function validateNotePayload(input: unknown): NotePayload {
   return payload;
 }
 
+export function validateParentId(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || !/^[0-9a-f-]{36}$/.test(value)) {
+    throw new HttpError(400, "Página pai inválida.");
+  }
+  return value;
+}
+
 export function validateAttachment(file: File) {
   if (file.size < 1) throw new HttpError(400, "O arquivo está vazio.");
   if (file.size > MAX_ATTACHMENT_BYTES) {

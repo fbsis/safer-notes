@@ -66,13 +66,13 @@ export class Vault {
       findNote: this.database.prepare("SELECT * FROM notes WHERE id = ? AND user_id = ?"),
       insertNote: this.database.prepare(`
         INSERT INTO notes (
-          id, user_id, ciphertext, iv, auth_tag, crypto_version,
+          id, user_id, parent_id, ciphertext, iv, auth_tag, crypto_version,
           revision, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `),
       updateNote: this.database.prepare(`
         UPDATE notes SET
-          ciphertext = ?, iv = ?, auth_tag = ?, crypto_version = ?,
+          parent_id = ?, ciphertext = ?, iv = ?, auth_tag = ?, crypto_version = ?,
           revision = ?, updated_at = ?
         WHERE id = ? AND user_id = ? AND revision = ?
       `),
@@ -278,6 +278,7 @@ export class Vault {
       try {
         return {
           id: row.id,
+          parentId: row.parent_id,
           ...decryptNote(dataKey, row),
           revision: row.revision,
           createdAt: row.created_at,
@@ -293,14 +294,21 @@ export class Vault {
     });
   }
 
-  createNote(userId: string, dataKey: Uint8Array, payload: NotePayload): DecryptedNote {
+  createNote(
+    userId: string,
+    dataKey: Uint8Array,
+    parentId: string | null,
+    payload: NotePayload
+  ): DecryptedNote {
     const id = crypto.randomUUID();
+    this.assertValidParent(userId, id, parentId);
     const revision = 1;
     const encrypted = encryptNote(dataKey, userId, id, revision, payload);
     const now = new Date().toISOString();
     this.statements.insertNote.run(
       id,
       userId,
+      parentId,
       encrypted.ciphertext,
       encrypted.iv,
       encrypted.tag,
@@ -309,7 +317,7 @@ export class Vault {
       now,
       now
     );
-    return { id, ...payload, revision, createdAt: now, updatedAt: now };
+    return { id, parentId, ...payload, revision, createdAt: now, updatedAt: now };
   }
 
   updateNote(
@@ -317,12 +325,15 @@ export class Vault {
     dataKey: Uint8Array,
     id: string,
     expectedRevision: number,
+    parentId: string | null,
     payload: NotePayload
   ): DecryptedNote {
+    this.assertValidParent(userId, id, parentId);
     const revision = expectedRevision + 1;
     const encrypted = encryptNote(dataKey, userId, id, revision, payload);
     const now = new Date().toISOString();
     const result = this.statements.updateNote.run(
+      parentId,
       encrypted.ciphertext,
       encrypted.iv,
       encrypted.tag,
@@ -341,7 +352,32 @@ export class Vault {
         exists ? "revision_conflict" : "not_found"
       );
     }
-    return { id, ...payload, revision, updatedAt: now };
+    return { id, parentId, ...payload, revision, updatedAt: now };
+  }
+
+  private assertValidParent(userId: string, noteId: string, parentId: string | null) {
+    if (!parentId) return;
+    const visited = new Set<string>();
+    let currentId: string | null = parentId;
+    while (currentId) {
+      if (currentId === noteId) {
+        throw new HttpError(
+          400,
+          "Uma página não pode ficar dentro dela mesma ou de uma descendente.",
+          "invalid_parent"
+        );
+      }
+      if (visited.has(currentId)) {
+        throw new HttpError(500, "A árvore de páginas está inconsistente.");
+      }
+      visited.add(currentId);
+      const parent = this.statements.findNote.get(
+        currentId,
+        userId
+      ) as unknown as NoteRow | undefined;
+      if (!parent) throw new HttpError(404, "Página pai não encontrada.");
+      currentId = parent.parent_id;
+    }
   }
 
   deleteNote(userId: string, id: string) {

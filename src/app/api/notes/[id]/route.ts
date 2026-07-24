@@ -1,7 +1,7 @@
 import { api, json, readJson } from "@/server/api";
 import { HttpError } from "@/server/errors";
 import { getRuntime } from "@/server/runtime";
-import { validateNotePayload } from "@/server/validation";
+import { validateNotePayload, validateParentId } from "@/server/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +19,7 @@ export function PATCH(request: Request, context: Context) {
     sessions.requireCsrf(request, session);
     const body = await readJson(request);
     const payload = validateNotePayload(body);
+    const parentId = validateParentId(body.parentId);
     if (!Number.isInteger(body.revision) || Number(body.revision) < 1) {
       throw new HttpError(400, "Revisão inválida.");
     }
@@ -28,6 +29,7 @@ export function PATCH(request: Request, context: Context) {
         session.dataKey,
         id,
         Number(body.revision),
+        parentId,
         payload
       )
     });
