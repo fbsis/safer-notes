@@ -78,8 +78,8 @@ anexos sem descriptografar os bytes do arquivo.
 - Cada usuário possui uma chave de dados própria, protegida por uma chave
   derivada da senha com `scrypt`.
 - Senhas e chaves abertas não são persistidas.
-- O administrador cria convites, mas não consegue abrir cofres de outros
-  usuários.
+- Não existem administradores nem convites. Qualquer pessoa com acesso ao
+  serviço pode criar uma conta, e cada conta acessa somente o próprio cofre.
 - Não existe recuperação de senha. Perder a senha significa perder
   definitivamente o conteúdo.
 - A criptografia protege os dados em repouso. Um processo ou navegador
@@ -95,18 +95,9 @@ Compose; não é necessário instalar Node.js, npm, OpenSSL ou SQLite.
 ./deploy.sh
 ```
 
-Acesse `http://127.0.0.1:3001`. O Compose gera automaticamente o token de
-configuração dentro do volume `notes_secrets`.
-
-Para visualizar o token no primeiro acesso:
-
-```bash
-docker compose -f docker-compose.production.yml run --rm setup \
-  cat /secrets/admin-setup-token
-```
-
-O token só cria o primeiro administrador e não descriptografa notas. Depois que
-o primeiro usuário existe, o endpoint de configuração fica desativado.
+Acesse `http://127.0.0.1:3001`. Na tela inicial, escolha **Criar novo cofre**,
+informe um nome de usuário e uma senha mestra. Não existe token de configuração,
+administrador global ou fluxo de convites.
 
 No navegador local, use sempre `http://127.0.0.1:3001`. O endereço
 `0.0.0.0:3001` visto em logs é apenas a interface interna do container.
@@ -120,8 +111,6 @@ Variáveis disponíveis:
 | `NOTES_BIND_ADDRESS` | `127.0.0.1` | Interface publicada no host |
 | `NOTES_PORT` | `3001` | Porta publicada no host |
 | `NOTES_DB` | `data/notes.sqlite` | Caminho do SQLite |
-| `NOTES_ADMIN_SETUP_TOKEN_FILE` | — | Arquivo contendo o token inicial |
-| `NOTES_ADMIN_SETUP_TOKEN` | — | Alternativa local ao arquivo secreto |
 | `NOTES_HTTPS` | `0` | Use `1` atrás de HTTPS para ativar cookie `Secure` |
 | `NOTES_IDLE_MINUTES` | `15` | Minutos sem interação antes do bloqueio automático |
 
@@ -189,7 +178,7 @@ SKIP_TESTS=1 ./deploy.sh
 
 O arquivo [docker-compose.production.yml](docker-compose.production.yml) aplica
 filesystem somente para leitura, capabilities removidas, limite de processos,
-limite de memória, rotação de logs e volumes separados para dados e token.
+limite de memória, rotação de logs e volume persistente para os dados.
 
 ## Operação
 
@@ -200,11 +189,10 @@ limite de memória, rotação de logs e volumes separados para dados e token.
 - Enquanto existe atividade na tela, um heartbeat autenticado mantém a sessão
   do servidor ativa. O padrão é 15 minutos e pode ser alterado com
   `NOTES_IDLE_MINUTES`.
-- Convites administrativos valem por 24 horas e são utilizáveis uma única vez.
+- O cadastro é aberto para quem alcançar o serviço. Em uma publicação externa,
+  limite o acesso na rede ou em um proxy HTTPS.
 - O SQLite usa WAL. Para backup consistente, pare o container antes de copiar o
   volume ou utilize uma ferramenta de backup compatível com SQLite.
-- O token inicial não descriptografa notas e não substitui as senhas dos
-  usuários.
 
 Não há fluxo de execução ou testes diretamente no host; use sempre os comandos
 Docker Compose documentados acima.

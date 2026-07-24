@@ -91,6 +91,3 @@ trap - ERR
 log "Deploy concluído com sucesso"
 printf 'Aplicação: http://%s:%s\n' "${bind_address}" "${published_port}"
 printf 'Status: %s\n' "${status}"
-printf '\nNo primeiro acesso, consulte o token com:\n'
-printf 'docker compose -p %q -f %q run --rm setup cat /secrets/admin-setup-token\n' \
-  "${PROJECT_NAME}" "${PRODUCTION_FILE}"
