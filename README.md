@@ -21,12 +21,19 @@ compatível com a versão anterior; volumes existentes não precisam de migraç�
 
 As notas funcionam como páginas organizadas em uma árvore:
 
-- o botão `+` ao lado de uma página cria uma subpágina;
+- a barra lateral fixa apresenta páginas e subpáginas em uma árvore compacta,
+  inspirada na navegação do Notion;
+- o `+` do cabeçalho cria uma página na raiz e o `+` exibido ao passar o mouse
+  sobre uma página cria uma subpágina;
 - os ramos podem ser recolhidos e expandidos;
 - o seletor **Dentro de** move a página para a raiz ou para outra página;
 - páginas podem ter quantos níveis forem necessários;
 - ciclos são rejeitados pelo servidor;
 - excluir uma página remove toda a subárvore e seus anexos.
+
+O editor usa toda a área restante da janela, com a barra de formatação fixa
+durante a rolagem. Em telas menores, a navegação e o editor passam a ocupar
+linhas separadas para manter os controles acessíveis.
 
 A coluna relacional `parent_id` permite montar a árvore e aplicar a exclusão em
 cascata. A mesma relação também fica dentro do payload criptografado: se alguém
