@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.DS_Store
+Dockerfile*
+README.md
+data
+node_modules
+npm-debug.log*
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
