@@ -1,16 +1,16 @@
-name: Publicar imagem versionada
+name: Publicar imagem a cada push
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches:
+      - main
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: publish-image-${{ github.ref }}
+  group: publish-image-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -43,9 +43,9 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           flavor: latest=false
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
+            type=sha,prefix=sha-
+            type=raw,value=build-${{ github.run_number }}
 
       - name: Construir e publicar
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7

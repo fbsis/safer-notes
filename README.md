@@ -236,17 +236,24 @@ Os arquivos [docker-compose.yml](docker-compose.yml) e
 para leitura, capabilities removidas, limite de processos, limite de memória,
 rotação de logs e bind mount persistente em `./data`.
 
-### Publicação de versões
+### Publicação de imagens
 
-O workflow `.github/workflows/publish-image.yml` executa os testes e publica a
-imagem no GitHub Container Registry quando uma tag SemVer é enviada. Além das
-tags da versão, cada publicação atualiza `latest`:
+O workflow `.github/workflows/publish-image.yml` executa os testes e publica
+uma nova imagem no GitHub Container Registry em todo push para a branch `main`.
+Não é necessário criar uma Git tag:
 
 ```bash
-git tag -a v2.0.1 -m "safer-notes 2.0.1"
 git push origin main
-git push origin v2.0.1
 ```
+
+Cada execução publica três referências para a mesma imagem:
+
+- `latest`, sempre apontando para o push mais recente publicado com sucesso;
+- `sha-<commit>`, identificando exatamente o commit usado no build;
+- `build-<número>`, identificando a execução do GitHub Actions.
+
+O `docker-compose.yml` usa `latest` e `pull_policy: always`, portanto
+`docker compose up -d` procura a publicação mais recente.
 
 A primeira publicação do pacote no GHCR é privada por padrão. Para permitir
 instalação sem login, altere a visibilidade do pacote `safer-notes` para
