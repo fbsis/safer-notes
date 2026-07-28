@@ -91,6 +91,46 @@ anexos sem descriptografar os bytes do arquivo.
 Todo o projeto roda dentro do Docker. O host precisa apenas de Docker com
 Compose; não é necessário instalar Node.js, npm, OpenSSL ou SQLite.
 
+### Instalação sem clonar o repositório
+
+A imagem versionada é publicada em `ghcr.io/fbsis/safer-notes`. Para instalar,
+baixe somente o Compose standalone:
+
+```bash
+mkdir safer-notes
+cd safer-notes
+curl -fsSLo compose.yml \
+  https://raw.githubusercontent.com/fbsis/safer-notes/main/safer-notes.compose.yml
+docker compose up -d
+```
+
+O arquivo usa exclusivamente a imagem `ghcr.io/fbsis/safer-notes:2.0.0`; não
+há `build:` nem dependência do código-fonte. O banco é criado em
+`./data/notes.sqlite` no diretório em que o Compose foi salvo.
+
+Para usar outra versão publicada sem editar o arquivo:
+
+```bash
+NOTES_VERSION=2.1.0 docker compose up -d
+```
+
+Porta, binding, tempo de inatividade e diretório também podem ser substituídos:
+
+```bash
+NOTES_PORT=8080 \
+NOTES_BIND_ADDRESS=127.0.0.1 \
+NOTES_IDLE_MINUTES=5 \
+NOTES_DATA_DIR=/srv/safer-notes/data \
+docker compose up -d
+```
+
+As imagens são publicadas para `linux/amd64` e `linux/arm64`. A tag `latest` não
+é gerada: toda instalação fica associada a uma versão explícita.
+
+### Desenvolvimento e build local
+
+Para construir a imagem diretamente a partir do código do repositório:
+
 ```bash
 ./deploy.sh
 ```
@@ -181,6 +221,21 @@ SKIP_TESTS=1 ./deploy.sh
 O arquivo [docker-compose.production.yml](docker-compose.production.yml) aplica
 filesystem somente para leitura, capabilities removidas, limite de processos,
 limite de memória, rotação de logs e bind mount persistente em `./data`.
+
+### Publicação de versões
+
+O workflow `.github/workflows/publish-image.yml` executa os testes e publica a
+imagem no GitHub Container Registry quando uma tag SemVer é enviada:
+
+```bash
+git tag -a v2.0.0 -m "safer-notes 2.0.0"
+git push origin main
+git push origin v2.0.0
+```
+
+A primeira publicação do pacote no GHCR é privada por padrão. Para permitir
+instalação sem login, altere a visibilidade do pacote `safer-notes` para
+**Public** nas configurações de Packages do GitHub.
 
 ## Operação
 

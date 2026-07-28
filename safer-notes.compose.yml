@@ -1,0 +1,34 @@
+name: safer-notes
+
+services:
+  notes:
+    image: ghcr.io/fbsis/safer-notes:${NOTES_VERSION:-2.0.0}
+    pull_policy: ${NOTES_PULL_POLICY:-always}
+    init: true
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: 3001
+      NOTES_DB: /app/data/notes.sqlite
+      NOTES_HTTPS: ${NOTES_HTTPS:-0}
+      NOTES_IDLE_MINUTES: ${NOTES_IDLE_MINUTES:-15}
+    volumes:
+      - ${NOTES_DATA_DIR:-./data}:/app/data
+    ports:
+      - "${NOTES_BIND_ADDRESS:-0.0.0.0}:${NOTES_PORT:-3002}:3001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    mem_limit: 1g
+    cpus: 2
+    stop_grace_period: 15s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
