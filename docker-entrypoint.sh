@@ -6,11 +6,16 @@ data_directory="$(dirname "${NOTES_DB:-/app/data/notes.sqlite}")"
 attachments_directory="${NOTES_ATTACHMENTS_DIR:-/app/data/attachments}"
 
 if [ "$(id -u)" -eq 0 ]; then
-  mkdir -p "${data_directory}"
-  mkdir -p "${attachments_directory}"
-  chown 1000:1000 "${data_directory}"
-  chown 1000:1000 "${attachments_directory}"
+  if [ ! -d "${data_directory}" ]; then
+    mkdir -p "${data_directory}"
+  fi
+  chown 0:0 "${data_directory}"
   chmod 700 "${data_directory}"
+
+  if [ ! -d "${attachments_directory}" ]; then
+    mkdir -p "${attachments_directory}"
+  fi
+  chown 0:0 "${attachments_directory}"
   chmod 700 "${attachments_directory}"
 
   for database_file in \
@@ -31,6 +36,9 @@ if [ "$(id -u)" -eq 0 ]; then
       chmod 600 "${attachment_file}"
     fi
   done
+
+  chown 1000:1000 "${attachments_directory}"
+  chown 1000:1000 "${data_directory}"
 
   exec setpriv \
     --reuid=1000 \

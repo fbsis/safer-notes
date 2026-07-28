@@ -17,3 +17,37 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+  permissions:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: safer-notes:permissions-test
+    command:
+      - node
+      - -e
+      - |
+        const fs = require("node:fs");
+        if (process.getuid() !== 1000) throw new Error("UID final inválido");
+        for (const directory of ["/app/data", "/app/data/attachments"]) {
+          const mode = fs.statSync(directory).mode & 0o777;
+          if (mode !== 0o700) throw new Error("Modo inválido em " + directory);
+        }
+        fs.writeFileSync("/app/data/attachments/permission-test.bin", "ok", {
+          mode: 0o600
+        });
+        console.log("Teste de permissões do bind mount concluído.");
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+      - /app/data:rw,noexec,nosuid,size=16m,uid=12345,gid=12345,mode=0700
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - SETGID
+      - SETUID

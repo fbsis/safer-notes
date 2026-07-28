@@ -214,11 +214,15 @@ suíte em um ambiente limpo:
 
 ```bash
 docker compose -f docker-compose.test.yml run --build --rm tests
+docker compose -f docker-compose.test.yml run --build --rm permissions
 ```
 
-O Compose de testes desabilita a rede, remove capabilities, deixa o filesystem
+O teste da aplicação desabilita a rede, remove capabilities, deixa o filesystem
 da imagem somente para leitura e disponibiliza apenas `/tmp` em memória. Nenhum
 volume persistente ou secret é usado; o SQLite temporário desaparece ao final.
+O segundo teste conserva apenas as quatro capabilities do Compose de produção,
+inicializa `/app/data` propositalmente como UID `12345` e confirma que as
+permissões são corrigidas antes de o Next.js assumir o processo.
 
 Também é possível executar a imagem diretamente:
 

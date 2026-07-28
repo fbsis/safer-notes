@@ -45,6 +45,8 @@ log "Validando configurações Docker Compose"
 if [[ "${SKIP_TESTS}" != "1" ]]; then
   log "Executando testes em container isolado"
   "${TESTS[@]}" run --build --rm tests
+  log "Testando inicialização com volume pertencente a outro UID"
+  "${TESTS[@]}" run --build --rm permissions
 else
   log "Testes ignorados por SKIP_TESTS=1"
 fi
