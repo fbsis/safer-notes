@@ -111,6 +111,9 @@ O arquivo usa exclusivamente a imagem `ghcr.io/fbsis/safer-notes:latest`; não
 há `build:` nem dependência do código-fonte. A política `pull_policy: always`
 consulta a imagem mais recente sempre que `docker compose up -d` é executado.
 O banco é criado em `./data/notes.sqlite`, no mesmo diretório do Compose.
+Ao iniciar, a imagem ajusta a propriedade e os modos da pasta e dos arquivos
+SQLite e, em seguida, remove os privilégios antes de executar o Next.js como
+UID/GID `1000`.
 
 Porta, binding, tempo de inatividade e diretório também podem ser substituídos:
 
@@ -206,8 +209,9 @@ docker run --rm --network none --read-only --tmpfs /tmp notes:test
 ### Imagem local
 
 A imagem local contém apenas a aplicação e as dependências necessárias, usa o
-servidor standalone do Next.js, executa como usuário não-root e possui
-healthcheck. Ela é construída pelo Compose de desenvolvimento:
+servidor standalone do Next.js e possui healthcheck. Um inicializador restrito
+prepara as permissões do SQLite e executa a aplicação como usuário não-root.
+Ela é construída pelo Compose de desenvolvimento:
 
 ```bash
 docker compose -f docker.compose.dev.yml up -d --build
@@ -233,7 +237,8 @@ SKIP_TESTS=1 ./deploy.sh
 
 Os arquivos [docker-compose.yml](docker-compose.yml) e
 [docker.compose.dev.yml](docker.compose.dev.yml) aplicam filesystem somente
-para leitura, capabilities removidas, limite de processos, limite de memória,
+para leitura, capabilities limitadas à preparação inicial do SQLite, redução
+de privilégios antes do Next.js, limite de processos, limite de memória,
 rotação de logs e bind mount persistente em `./data`.
 
 ### Publicação de imagens

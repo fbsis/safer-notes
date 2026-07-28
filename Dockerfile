@@ -36,16 +36,16 @@ WORKDIR /app
 
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+COPY --chmod=755 docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN mkdir -p /app/data \
     && chown node:node /app/data \
     && chmod 700 /app/data
-
-USER node
 
 EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:3001/api/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["node", "server.js"]
