@@ -84,8 +84,8 @@ if [[ "${status}" != "healthy" ]]; then
   exit 1
 fi
 
-bind_address="${NOTES_BIND_ADDRESS:-127.0.0.1}"
-published_port="${NOTES_PORT:-3001}"
+bind_address="${NOTES_BIND_ADDRESS:-0.0.0.0}"
+published_port="${NOTES_PORT:-3002}"
 
 trap - ERR
 log "Deploy concluído com sucesso"

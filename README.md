@@ -94,12 +94,13 @@ Compose; não é necessário instalar Node.js, npm, OpenSSL ou SQLite.
 ./deploy.sh
 ```
 
-Acesse `http://127.0.0.1:3001`. Na tela inicial, escolha **Criar novo cofre**,
+Acesse `http://127.0.0.1:3002`. Na tela inicial, escolha **Criar novo cofre**,
 informe um nome de usuário e uma senha mestra. Não existe token de configuração,
 administrador global ou fluxo de convites.
 
-No navegador local, use sempre `http://127.0.0.1:3001`. O endereço
-`0.0.0.0:3001` visto em logs é apenas a interface interna do container.
+O padrão publica a porta em todas as interfaces. Em outro dispositivo da rede,
+use o IP do servidor, por exemplo `http://192.168.1.190:3002`. O endereço
+`0.0.0.0` representa o binding e não deve ser usado como URL.
 
 Variáveis disponíveis:
 
@@ -107,8 +108,8 @@ Variáveis disponíveis:
 | --- | --- | --- |
 | `PORT` | `3001` | Porta HTTP |
 | `HOSTNAME` | `0.0.0.0` | Interface interna do container |
-| `NOTES_BIND_ADDRESS` | `127.0.0.1` | Interface publicada no host |
-| `NOTES_PORT` | `3001` | Porta publicada no host |
+| `NOTES_BIND_ADDRESS` | `0.0.0.0` | Interface publicada no host |
+| `NOTES_PORT` | `3002` | Porta publicada no host |
 | `NOTES_DB` | `data/notes.sqlite` | Caminho do SQLite |
 | `NOTES_HTTPS` | `0` | Use `1` atrás de HTTPS para ativar cookie `Secure` |
 | `NOTES_IDLE_MINUTES` | `15` | Minutos sem interação antes do bloqueio automático |
@@ -121,10 +122,10 @@ docker compose -f docker-compose.production.yml down
 ```
 
 `docker compose down` preserva os volumes. Não use `down -v` em produção, pois
-isso remove o banco e o token. Também não substitua a publicação da porta por
-`3001:3001`: isso disponibilizaria o HTTP na rede. Para uso remoto, coloque o
-serviço atrás de HTTPS, defina `NOTES_HTTPS=1` e não exponha diretamente a porta
-do container.
+isso remove o banco. Como o padrão disponibiliza HTTP na rede, use apenas em
+uma rede confiável. Para restringir novamente à própria máquina, execute com
+`NOTES_BIND_ADDRESS=127.0.0.1`. Para uso remoto, coloque o serviço atrás de
+HTTPS, defina `NOTES_HTTPS=1` e não exponha diretamente a porta do container.
 
 ## Imagens Docker
 

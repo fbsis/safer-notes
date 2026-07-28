@@ -16,7 +16,7 @@ services:
     volumes:
       - notes_data:/app/data
     ports:
-      - "${NOTES_BIND_ADDRESS:-127.0.0.1}:${NOTES_PORT:-3001}:3001"
+      - "${NOTES_BIND_ADDRESS:-0.0.0.0}:${NOTES_PORT:-3002}:3001"
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
