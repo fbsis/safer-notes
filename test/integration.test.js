@@ -52,6 +52,7 @@ async function startNext(databasePath) {
         NODE_ENV: "production",
         NEXT_TELEMETRY_DISABLED: "1",
         NOTES_DB: databasePath,
+        NOTES_ATTACHMENTS_DIR: path.join(path.dirname(databasePath), "attachments"),
         NOTES_IDLE_MINUTES: "0.05",
         NOTES_MAX_NOTE_MB: "1"
       },
@@ -90,6 +91,126 @@ async function stopNext(child) {
   });
 }
 
+test("migra anexos criptografados do SQLite para arquivos sem descriptografar", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "next-notes-migration-"));
+  const databasePath = path.join(directory, "notes.sqlite");
+  const userId = "4fc65717-3975-454f-9578-42a50f06380d";
+  const noteId = "f22edb80-5301-4f94-81c6-9091a8862357";
+  const attachmentId = "b291f930-8720-4e0a-bf6d-fea88df71165";
+  const ciphertext = Buffer.from("bytes-ja-criptografados");
+  const iv = Buffer.from("123456789012");
+  const tag = Buffer.from("1234567890abcdef");
+  const database = new DatabaseSync(databasePath);
+  database.exec(`
+    CREATE TABLE users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+      kdf_salt BLOB NOT NULL,
+      kdf_n INTEGER NOT NULL,
+      kdf_r INTEGER NOT NULL,
+      kdf_p INTEGER NOT NULL,
+      wrapped_dek BLOB NOT NULL,
+      wrap_iv BLOB NOT NULL,
+      wrap_tag BLOB NOT NULL,
+      crypto_version INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE notes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      ciphertext BLOB NOT NULL,
+      iv BLOB NOT NULL,
+      auth_tag BLOB NOT NULL,
+      crypto_version INTEGER NOT NULL,
+      revision INTEGER NOT NULL CHECK (revision > 0),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE attachments (
+      id TEXT PRIMARY KEY,
+      note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      metadata_ciphertext BLOB NOT NULL,
+      metadata_iv BLOB NOT NULL,
+      metadata_auth_tag BLOB NOT NULL,
+      data_ciphertext BLOB NOT NULL,
+      data_iv BLOB NOT NULL,
+      data_auth_tag BLOB NOT NULL,
+      crypto_version INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    ) STRICT;
+  `);
+  const now = new Date().toISOString();
+  database.prepare(`
+    INSERT INTO users VALUES (?, ?, 'user', ?, 2, 1, 1, ?, ?, ?, 1, ?, ?)
+  `).run(
+    userId,
+    "migration-user",
+    Buffer.alloc(32, 1),
+    Buffer.alloc(32, 2),
+    Buffer.alloc(12, 3),
+    Buffer.alloc(16, 4),
+    now,
+    now
+  );
+  database.prepare(`
+    INSERT INTO notes VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)
+  `).run(
+    noteId,
+    userId,
+    Buffer.alloc(32, 5),
+    Buffer.alloc(12, 6),
+    Buffer.alloc(16, 7),
+    now,
+    now
+  );
+  database.prepare(`
+    INSERT INTO attachments VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+  `).run(
+    attachmentId,
+    noteId,
+    userId,
+    Buffer.alloc(32, 8),
+    Buffer.alloc(12, 9),
+    Buffer.alloc(16, 10),
+    ciphertext,
+    iv,
+    tag,
+    now
+  );
+  database.close();
+
+  const server = await startNext(databasePath);
+  t.after(async () => {
+    await stopNext(server.child);
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  const envelope = fs.readFileSync(
+    path.join(directory, "attachments", `${attachmentId}.bin`)
+  );
+  assert.equal(envelope.subarray(0, 8).toString("ascii"), "SNATT001");
+  assert.deepEqual(envelope.subarray(8, 20), iv);
+  assert.deepEqual(envelope.subarray(20, 36), tag);
+  assert.deepEqual(envelope.subarray(36), ciphertext);
+
+  const migrated = new DatabaseSync(databasePath);
+  const columns = migrated
+    .prepare("PRAGMA table_info(attachments)")
+    .all()
+    .map((column) => column.name);
+  assert.equal(columns.includes("data_ciphertext"), false);
+  assert.equal(columns.includes("data_iv"), false);
+  assert.equal(columns.includes("data_auth_tag"), false);
+  assert.equal(
+    migrated.prepare("SELECT COUNT(*) AS total FROM attachments").get().total,
+    1
+  );
+  migrated.close();
+});
+
 test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   const { base64DataUrlToFile, readClipboardFiles, readDraggedUrl } = await import(
     "../src/components/drop-utils.mjs"
@@ -124,6 +245,7 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "next-notes-"));
   const databasePath = path.join(directory, "notes.sqlite");
+  const attachmentsDirectory = path.join(directory, "attachments");
   const legacyDatabase = new DatabaseSync(databasePath);
   legacyDatabase.exec(`
     CREATE TABLE notes (
@@ -136,6 +258,20 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
       revision INTEGER NOT NULL CHECK (revision > 0),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    ) STRICT;
+
+    CREATE TABLE attachments (
+      id TEXT PRIMARY KEY,
+      note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      metadata_ciphertext BLOB NOT NULL,
+      metadata_iv BLOB NOT NULL,
+      metadata_auth_tag BLOB NOT NULL,
+      data_ciphertext BLOB NOT NULL,
+      data_iv BLOB NOT NULL,
+      data_auth_tag BLOB NOT NULL,
+      crypto_version INTEGER NOT NULL,
+      created_at TEXT NOT NULL
     ) STRICT;
   `);
   legacyDatabase.close();
@@ -304,11 +440,35 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     }
   });
   const disposableChild = result.data.note;
+  const disposableAttachmentForm = new FormData();
+  disposableAttachmentForm.set(
+    "file",
+    new File(["anexo descartável"], "descartavel.txt", { type: "text/plain" })
+  );
+  const disposableAttachmentResponse = await fetch(
+    `${primary.baseUrl}/api/notes/${disposableChild.id}/attachments`,
+    {
+      method: "POST",
+      headers: {
+        Cookie: primary.cookie,
+        "X-CSRF-Token": primaryCsrf
+      },
+      body: disposableAttachmentForm
+    }
+  );
+  assert.equal(disposableAttachmentResponse.status, 201);
+  const disposableAttachment = (await disposableAttachmentResponse.json()).attachment;
+  const disposableAttachmentPath = path.join(
+    attachmentsDirectory,
+    `${disposableAttachment.id}.bin`
+  );
+  assert.equal(fs.existsSync(disposableAttachmentPath), true);
   result = await request(primary, `/api/notes/${disposableRoot.id}`, {
     method: "DELETE",
     headers: { "X-CSRF-Token": primaryCsrf }
   });
   assert.equal(result.response.status, 204);
+  assert.equal(fs.existsSync(disposableAttachmentPath), false);
   result = await request(primary, "/api/notes");
   assert.equal(
     result.data.notes.some((note) =>
@@ -343,6 +503,31 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   const attachment = attachmentResult.attachment;
   assert.equal(attachment.name, "SEGREDO-NOME-DO-ARQUIVO.txt");
   assert.equal(attachment.isImage, false);
+  const attachmentPath = path.join(attachmentsDirectory, `${attachment.id}.bin`);
+  assert.equal(fs.existsSync(attachmentPath), true);
+  const attachmentEnvelope = fs.readFileSync(attachmentPath);
+  assert.equal(attachmentEnvelope.subarray(0, 8).toString("ascii"), "SNATT001");
+  assert.equal(attachmentEnvelope.includes(Buffer.from(attachmentSecret)), false);
+  assert.equal(
+    attachmentEnvelope.includes(Buffer.from("SEGREDO-NOME-DO-ARQUIVO")),
+    false
+  );
+
+  const attachmentDatabase = new DatabaseSync(databasePath);
+  const attachmentColumns = attachmentDatabase
+    .prepare("PRAGMA table_info(attachments)")
+    .all()
+    .map((column) => column.name);
+  assert.equal(attachmentColumns.includes("data_ciphertext"), false);
+  assert.equal(attachmentColumns.includes("data_iv"), false);
+  assert.equal(attachmentColumns.includes("data_auth_tag"), false);
+  assert.equal(
+    attachmentDatabase
+      .prepare("SELECT COUNT(*) AS total FROM attachments WHERE id = ?")
+      .get(attachment.id).total,
+    1
+  );
+  attachmentDatabase.close();
 
   const imageBytes = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -441,6 +626,7 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     headers: { "X-CSRF-Token": primaryCsrf }
   });
   assert.equal(result.response.status, 204);
+  assert.equal(fs.existsSync(attachmentPath), false);
   attachmentResponse = await fetch(`${primary.baseUrl}${attachment.url}`, {
     headers: { Cookie: primary.cookie }
   });

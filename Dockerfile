@@ -29,6 +29,7 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PORT=3001 \
     NOTES_DB=/app/data/notes.sqlite \
+    NOTES_ATTACHMENTS_DIR=/app/data/attachments \
     NOTES_HTTPS=0 \
     NOTES_IDLE_MINUTES=15 \
     NOTES_MAX_NOTE_MB=50
@@ -39,9 +40,9 @@ COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --chmod=755 docker-entrypoint.sh /app/docker-entrypoint.sh
 
-RUN mkdir -p /app/data \
-    && chown node:node /app/data \
-    && chmod 700 /app/data
+RUN mkdir -p /app/data/attachments \
+    && chown -R node:node /app/data \
+    && chmod 700 /app/data /app/data/attachments
 
 EXPOSE 3001
 

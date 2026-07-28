@@ -18,8 +18,9 @@ sensíveis criptografados por usuário.
 - `docker-compose.test.yml`: testes automatizados em container isolado.
 
 O build usa `output: "standalone"` do Next.js. O banco persistente fica em
-`data/notes.sqlite`, ao lado dos arquivos Compose. A pasta `data/` não é
-versionada nem enviada ao contexto de build das imagens.
+`data/notes.sqlite` e os anexos criptografados ficam em `data/attachments`,
+ao lado dos arquivos Compose. A pasta `data/` não é versionada nem enviada ao
+contexto de build das imagens.
 
 ## Árvore de páginas
 
@@ -55,10 +56,17 @@ como um arquivo `.md` legível no volume. Notas da versão anterior, armazenadas
 como Quill Delta, continuam abrindo e são convertidas para Markdown no próximo
 salvamento.
 
-Imagens e arquivos podem ser adicionados pelo botão abaixo do editor. Cada
-anexo é salvo na tabela `attachments`, vinculado à nota e ao usuário. Nome,
-tipo MIME e conteúdo usam campos criptografados separados, permitindo listar os
-anexos sem descriptografar os bytes do arquivo.
+Imagens e arquivos podem ser adicionados pelo botão abaixo do editor. A tabela
+`attachments` mantém somente os identificadores relacionais, os metadados
+criptografados e os campos técnicos da criptografia. Os bytes criptografados
+ficam em `data/attachments/<id>.bin`; o nome físico é apenas um UUID aleatório,
+sem nome original, extensão real, tipo MIME ou conteúdo legível.
+
+Cada arquivo possui um envelope binário com versão, IV, tag de autenticação e
+ciphertext AES-256-GCM. Nome original e tipo MIME permanecem nos metadados
+criptografados do SQLite. A autenticação criptográfica associa os bytes ao
+usuário, à nota e ao ID do anexo, portanto trocar arquivos entre IDs ou editar
+seus bytes faz a leitura falhar.
 
 - links HTTP/HTTPS arrastados para o editor viram links Markdown dentro do
   conteúdo criptografado da nota;
@@ -75,6 +83,12 @@ anexos sem descriptografar os bytes do arquivo.
 - o limite é de 50 MiB por arquivo e 500 MiB de anexos por nota;
 - excluir uma nota remove seus anexos em cascata;
 - excluir um anexo pela lista também remove suas referências do conteúdo.
+
+Ao abrir um banco criado por uma versão anterior, o serviço copia os BLOBs já
+criptografados para `data/attachments` sem descriptografá-los e só depois
+remove do esquema as colunas de conteúdo. A migração é idempotente: se for
+interrompida, arquivos completos já copiados são verificados e reutilizados na
+próxima inicialização.
 
 ## Garantias e limites
 
@@ -114,10 +128,11 @@ docker compose up -d
 O arquivo usa exclusivamente a imagem `ghcr.io/fbsis/safer-notes:latest`; não
 há `build:` nem dependência do código-fonte. A política `pull_policy: always`
 consulta a imagem mais recente sempre que `docker compose up -d` é executado.
-O banco é criado em `./data/notes.sqlite`, no mesmo diretório do Compose.
+O banco é criado em `./data/notes.sqlite` e os anexos em
+`./data/attachments`, no mesmo diretório do Compose.
 Ao iniciar, a imagem ajusta a propriedade e os modos da pasta e dos arquivos
-SQLite e, em seguida, remove os privilégios antes de executar o Next.js como
-UID/GID `1000`.
+SQLite/anexos e, em seguida, remove os privilégios antes de executar o Next.js
+como UID/GID `1000`.
 
 Porta, binding, tempo de inatividade e diretório também podem ser substituídos:
 
@@ -129,8 +144,8 @@ NOTES_DATA_DIR=/srv/safer-notes/data \
 docker compose up -d
 ```
 
-As imagens são publicadas para `linux/amd64` e `linux/arm64`. Cada release gera
-tags versionadas e também atualiza `latest`.
+As imagens são publicadas para `linux/amd64` e `linux/arm64`. Cada push aceito
+na branch `main` gera tags imutáveis do commit/build e também atualiza `latest`.
 
 Para atualizar uma instalação existente:
 
@@ -171,6 +186,7 @@ Variáveis disponíveis:
 | `NOTES_BIND_ADDRESS` | `0.0.0.0` | Interface publicada no host |
 | `NOTES_PORT` | `3002` | Porta publicada no host |
 | `NOTES_DB` | `data/notes.sqlite` | Caminho do SQLite |
+| `NOTES_ATTACHMENTS_DIR` | `data/attachments` | Diretório dos anexos criptografados |
 | `NOTES_HTTPS` | `0` | Use `1` atrás de HTTPS para ativar cookie `Secure` |
 | `NOTES_IDLE_MINUTES` | `15` | Minutos sem interação antes do bloqueio automático |
 | `NOTES_MAX_NOTE_MB` | `50` | Limite do título + Markdown, entre 1 e 50 MiB |
@@ -182,12 +198,12 @@ docker compose -f docker.compose.dev.yml logs -f notes
 docker compose -f docker.compose.dev.yml down
 ```
 
-`docker compose down` preserva `data/notes.sqlite`. Faça backup da pasta `data`
-antes de atualizações importantes. Como o padrão disponibiliza HTTP na rede,
-use apenas em uma rede confiável. Para restringir novamente à própria máquina,
-execute com `NOTES_BIND_ADDRESS=127.0.0.1`. Para uso remoto, coloque o serviço
-atrás de HTTPS, defina `NOTES_HTTPS=1` e não exponha diretamente a porta do
-container.
+`docker compose down` preserva toda a pasta `data`. O banco e a pasta
+`attachments` formam um único conjunto: sempre copie os dois no mesmo backup.
+Como o padrão disponibiliza HTTP na rede, use apenas em uma rede confiável.
+Para restringir novamente à própria máquina, execute com
+`NOTES_BIND_ADDRESS=127.0.0.1`. Para uso remoto, coloque o serviço atrás de
+HTTPS, defina `NOTES_HTTPS=1` e não exponha diretamente a porta do container.
 
 ## Imagens Docker
 
@@ -281,7 +297,33 @@ instalação sem login, altere a visibilidade do pacote `safer-notes` para
 - O cadastro é aberto para quem alcançar o serviço. Em uma publicação externa,
   limite o acesso na rede ou em um proxy HTTPS.
 - O SQLite usa WAL. Para backup consistente, pare o container antes de copiar o
-  diretório `data` ou utilize uma ferramenta de backup compatível com SQLite.
+  diretório `data` inteiro. Um backup apenas de `notes.sqlite` não contém os
+  anexos.
+
+Exemplo de backup, mantendo a aplicação parada durante a captura:
+
+```bash
+docker compose stop notes
+mkdir -p backups
+docker run --rm \
+  --entrypoint sh \
+  -v "$PWD/data:/source:ro" \
+  -v "$PWD/backups:/backup" \
+  ghcr.io/fbsis/safer-notes:latest \
+  -c 'tar -czf "/backup/safer-notes-$(date +%Y%m%d-%H%M%S).tar.gz" -C /source .'
+docker compose start notes
+```
+
+Depois da migração de um banco antigo, o SQLite pode manter páginas livres no
+arquivo mesmo sem os BLOBs. Após confirmar um backup e verificar espaço livre,
+esta compactação opcional devolve esse espaço:
+
+```bash
+docker compose stop notes
+docker compose run --rm --no-deps notes node -e \
+  "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.env.NOTES_DB);db.exec('VACUUM');db.close()"
+docker compose start notes
+```
 
 Não há fluxo de execução ou testes diretamente no host; use sempre os comandos
 Docker Compose documentados acima.

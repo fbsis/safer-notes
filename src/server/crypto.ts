@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import type { StoredAttachmentData } from "./attachment-storage";
 import type {
   AttachmentMetadata,
   AttachmentRow,
@@ -146,12 +147,16 @@ export function decryptAttachmentMetadata(
   return JSON.parse(plaintext.toString("utf8")) as AttachmentMetadata;
 }
 
-export function decryptAttachmentData(dataKey: Uint8Array, row: AttachmentRow) {
+export function decryptAttachmentData(
+  dataKey: Uint8Array,
+  row: AttachmentRow,
+  encrypted: StoredAttachmentData
+) {
   return decrypt(
     dataKey,
-    row.data_ciphertext,
-    row.data_iv,
-    row.data_auth_tag,
+    encrypted.ciphertext,
+    encrypted.iv,
+    encrypted.tag,
     `notes:attachment:v${row.crypto_version}:${row.user_id}:${row.note_id}:${row.id}:data`
   );
 }

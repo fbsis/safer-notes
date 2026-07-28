@@ -18,6 +18,7 @@ declare global {
 
 export function getRuntime(options?: {
   databasePath?: string;
+  attachmentsPath?: string;
   sessionIdleMs?: number;
   kdfParameters?: ScryptParameters;
 }) {
@@ -31,6 +32,7 @@ export function getRuntime(options?: {
 
 function createRuntime(options?: {
   databasePath?: string;
+  attachmentsPath?: string;
   sessionIdleMs?: number;
   kdfParameters?: ScryptParameters;
 }): Runtime {
@@ -39,8 +41,16 @@ function createRuntime(options?: {
     process.env.NOTES_DB ??
     path.join(process.cwd(), "data", "notes.sqlite");
   const idleTimeoutMs = options?.sessionIdleMs ?? configuredIdleTimeout();
+  const attachmentsPath =
+    options?.attachmentsPath ??
+    process.env.NOTES_ATTACHMENTS_DIR ??
+    path.join(path.dirname(databasePath), "attachments");
   return {
-    vault: new Vault(databasePath, options?.kdfParameters ?? SCRYPT_PARAMS),
+    vault: new Vault(
+      databasePath,
+      attachmentsPath,
+      options?.kdfParameters ?? SCRYPT_PARAMS
+    ),
     sessions: new SessionManager(idleTimeoutMs),
     secureCookies: process.env.NOTES_HTTPS === "1",
     idleTimeoutMs

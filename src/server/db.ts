@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { AttachmentStorage } from "./attachment-storage";
 
-export function openDatabase(filename: string) {
+export function openDatabase(filename: string, attachmentStorage: AttachmentStorage) {
   const directory = path.dirname(filename);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   fs.chmodSync(directory, 0o700);
@@ -58,9 +59,6 @@ export function openDatabase(filename: string) {
       metadata_ciphertext BLOB NOT NULL,
       metadata_iv BLOB NOT NULL,
       metadata_auth_tag BLOB NOT NULL,
-      data_ciphertext BLOB NOT NULL,
-      data_iv BLOB NOT NULL,
-      data_auth_tag BLOB NOT NULL,
       crypto_version INTEGER NOT NULL,
       created_at TEXT NOT NULL
     ) STRICT;
@@ -87,7 +85,70 @@ export function openDatabase(filename: string) {
       ON notes(parent_id, user_id, updated_at DESC);
   `);
 
+  migrateLegacyAttachments(database, attachmentStorage);
+
   return database;
+}
+
+interface LegacyAttachmentRow {
+  id: string;
+  data_ciphertext: Uint8Array;
+  data_iv: Uint8Array;
+  data_auth_tag: Uint8Array;
+}
+
+function migrateLegacyAttachments(
+  database: DatabaseSync,
+  attachmentStorage: AttachmentStorage
+) {
+  const columns = database.prepare("PRAGMA table_info(attachments)").all() as Array<{
+    name: string;
+  }>;
+  if (!columns.some((column) => column.name === "data_ciphertext")) return;
+
+  const legacyRows = database.prepare(`
+    SELECT id, data_ciphertext, data_iv, data_auth_tag
+    FROM attachments ORDER BY id
+  `);
+  for (const row of legacyRows.iterate() as Iterable<LegacyAttachmentRow>) {
+    attachmentStorage.write(row.id, {
+      ciphertext: row.data_ciphertext,
+      iv: row.data_iv,
+      tag: row.data_auth_tag
+    });
+  }
+
+  transaction(database, () => {
+    database.exec(`
+      DROP TABLE IF EXISTS attachments_v2;
+      CREATE TABLE attachments_v2 (
+        id TEXT PRIMARY KEY,
+        note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        metadata_ciphertext BLOB NOT NULL,
+        metadata_iv BLOB NOT NULL,
+        metadata_auth_tag BLOB NOT NULL,
+        crypto_version INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      ) STRICT;
+
+      INSERT INTO attachments_v2 (
+        id, note_id, user_id,
+        metadata_ciphertext, metadata_iv, metadata_auth_tag,
+        crypto_version, created_at
+      )
+      SELECT
+        id, note_id, user_id,
+        metadata_ciphertext, metadata_iv, metadata_auth_tag,
+        crypto_version, created_at
+      FROM attachments;
+
+      DROP TABLE attachments;
+      ALTER TABLE attachments_v2 RENAME TO attachments;
+      CREATE INDEX attachments_note_user
+        ON attachments(note_id, user_id, created_at);
+    `);
+  });
 }
 
 export function transaction<T>(database: DatabaseSync, callback: () => T): T {

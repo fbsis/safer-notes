@@ -36,9 +36,6 @@ export interface AttachmentRow {
   metadata_ciphertext: Uint8Array;
   metadata_iv: Uint8Array;
   metadata_auth_tag: Uint8Array;
-  data_ciphertext: Uint8Array;
-  data_iv: Uint8Array;
-  data_auth_tag: Uint8Array;
   crypto_version: number;
   created_at: string;
 }

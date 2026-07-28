@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { AttachmentStorage } from "./attachment-storage";
 import {
   CRYPTO_VERSION,
   SCRYPT_PARAMS,
@@ -30,12 +31,15 @@ const MAX_ATTACHMENTS_PER_NOTE_BYTES = 500 * 1024 * 1024;
 export class Vault {
   readonly database: DatabaseSync;
   private readonly statements: Record<string, StatementSync>;
+  private readonly attachmentStorage: AttachmentStorage;
 
   constructor(
     databasePath: string,
+    attachmentsPath: string,
     private readonly kdfParameters: ScryptParameters = SCRYPT_PARAMS
   ) {
-    this.database = openDatabase(databasePath);
+    this.attachmentStorage = new AttachmentStorage(attachmentsPath);
+    this.database = openDatabase(databasePath, this.attachmentStorage);
     this.statements = {
       findUser: this.database.prepare("SELECT * FROM users WHERE username = ?"),
       insertUser: this.database.prepare(`
@@ -71,9 +75,8 @@ export class Vault {
         INSERT INTO attachments (
           id, note_id, user_id,
           metadata_ciphertext, metadata_iv, metadata_auth_tag,
-          data_ciphertext, data_iv, data_auth_tag,
           crypto_version, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `),
       listAttachments: this.database.prepare(`
         SELECT * FROM attachments
@@ -82,9 +85,21 @@ export class Vault {
       findAttachment: this.database.prepare(
         "SELECT * FROM attachments WHERE id = ? AND user_id = ?"
       ),
-      attachmentBytes: this.database.prepare(`
-        SELECT COALESCE(SUM(length(data_ciphertext)), 0) AS bytes
+      attachmentIds: this.database.prepare(`
+        SELECT id
         FROM attachments WHERE note_id = ? AND user_id = ?
+      `),
+      subtreeAttachmentIds: this.database.prepare(`
+        WITH RECURSIVE subtree(id) AS (
+          SELECT id FROM notes WHERE id = ? AND user_id = ?
+          UNION ALL
+          SELECT notes.id
+          FROM notes JOIN subtree ON notes.parent_id = subtree.id
+          WHERE notes.user_id = ?
+        )
+        SELECT attachments.id
+        FROM attachments JOIN subtree ON attachments.note_id = subtree.id
+        WHERE attachments.user_id = ?
       `),
       deleteAttachment: this.database.prepare(
         "DELETE FROM attachments WHERE id = ? AND user_id = ?"
@@ -329,8 +344,17 @@ export class Vault {
   }
 
   deleteNote(userId: string, id: string) {
+    const attachmentIds = this.statements.subtreeAttachmentIds.all(
+      id,
+      userId,
+      userId,
+      userId
+    ) as Array<{ id: string }>;
     const result = this.statements.deleteNote.run(id, userId);
     if (Number(result.changes) !== 1) throw new HttpError(404, "Nota não encontrada.");
+    for (const attachment of attachmentIds) {
+      this.removeAttachmentFile(attachment.id);
+    }
   }
 
   createAttachment(
@@ -343,29 +367,37 @@ export class Vault {
     if (!this.statements.findNote.get(noteId, userId)) {
       throw new HttpError(404, "Nota não encontrada.");
     }
-    const current = this.statements.attachmentBytes.get(noteId, userId) as {
-      bytes: number | bigint;
-    };
-    if (Number(current.bytes) + data.byteLength > MAX_ATTACHMENTS_PER_NOTE_BYTES) {
+    const currentIds = this.statements.attachmentIds.all(
+      noteId,
+      userId
+    ) as Array<{ id: string }>;
+    const currentBytes = currentIds.reduce(
+      (total, attachment) => total + this.attachmentStorage.contentBytes(attachment.id),
+      0
+    );
+    if (currentBytes + data.byteLength > MAX_ATTACHMENTS_PER_NOTE_BYTES) {
       throw new HttpError(413, "Os anexos desta nota excedem o limite de 500 MiB.");
     }
 
     const id = crypto.randomUUID();
     const encrypted = encryptAttachment(dataKey, userId, noteId, id, metadata, data);
     const createdAt = new Date().toISOString();
-    this.statements.insertAttachment.run(
-      id,
-      noteId,
-      userId,
-      encrypted.metadata.ciphertext,
-      encrypted.metadata.iv,
-      encrypted.metadata.tag,
-      encrypted.data.ciphertext,
-      encrypted.data.iv,
-      encrypted.data.tag,
-      CRYPTO_VERSION,
-      createdAt
-    );
+    this.attachmentStorage.write(id, encrypted.data);
+    try {
+      this.statements.insertAttachment.run(
+        id,
+        noteId,
+        userId,
+        encrypted.metadata.ciphertext,
+        encrypted.metadata.iv,
+        encrypted.metadata.tag,
+        CRYPTO_VERSION,
+        createdAt
+      );
+    } catch (error) {
+      this.attachmentStorage.remove(id);
+      throw error;
+    }
     return { id, noteId, ...metadata, createdAt };
   }
 
@@ -410,7 +442,7 @@ export class Vault {
         id: row.id,
         noteId: row.note_id,
         ...decryptAttachmentMetadata(dataKey, row),
-        data: decryptAttachmentData(dataKey, row),
+        data: decryptAttachmentData(dataKey, row, this.attachmentStorage.read(row.id)),
         createdAt: row.created_at
       };
     } catch {
@@ -425,6 +457,17 @@ export class Vault {
   deleteAttachment(userId: string, id: string) {
     const result = this.statements.deleteAttachment.run(id, userId);
     if (Number(result.changes) !== 1) throw new HttpError(404, "Anexo não encontrado.");
+    this.removeAttachmentFile(id);
   }
 
+  private removeAttachmentFile(id: string) {
+    try {
+      this.attachmentStorage.remove(id);
+    } catch (error) {
+      console.error(
+        `Falha ao remover o arquivo criptografado do anexo ${id}:`,
+        error
+      );
+    }
+  }
 }

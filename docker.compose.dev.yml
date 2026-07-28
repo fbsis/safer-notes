@@ -11,6 +11,7 @@ services:
       HOSTNAME: 0.0.0.0
       PORT: 3001
       NOTES_DB: /app/data/notes.sqlite
+      NOTES_ATTACHMENTS_DIR: /app/data/attachments
       NOTES_HTTPS: ${NOTES_HTTPS:-0}
       NOTES_IDLE_MINUTES: ${NOTES_IDLE_MINUTES:-15}
       NOTES_MAX_NOTE_MB: ${NOTES_MAX_NOTE_MB:-50}
