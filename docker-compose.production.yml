@@ -14,7 +14,7 @@ services:
       NOTES_HTTPS: ${NOTES_HTTPS:-0}
       NOTES_IDLE_MINUTES: ${NOTES_IDLE_MINUTES:-15}
     volumes:
-      - notes_data:/app/data
+      - ./data:/app/data
     ports:
       - "${NOTES_BIND_ADDRESS:-0.0.0.0}:${NOTES_PORT:-3002}:3001"
     read_only: true
@@ -34,6 +34,3 @@ services:
       options:
         max-size: 10m
         max-file: "3"
-
-volumes:
-  notes_data:

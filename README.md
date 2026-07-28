@@ -14,8 +14,9 @@ sensíveis criptografados por usuário.
 - `Dockerfile`: imagem standalone de produção;
 - `Dockerfile.test`: build e suíte isolada.
 
-O build usa `output: "standalone"` do Next.js. O esquema SQLite continua
-compatível com a versão anterior; volumes existentes não precisam de migração.
+O build usa `output: "standalone"` do Next.js. O banco persistente fica em
+`data/notes.sqlite`, ao lado dos arquivos Compose. A pasta `data/` não é
+versionada nem enviada ao contexto de build das imagens.
 
 ## Árvore de páginas
 
@@ -121,11 +122,12 @@ docker compose -f docker-compose.production.yml logs -f notes
 docker compose -f docker-compose.production.yml down
 ```
 
-`docker compose down` preserva os volumes. Não use `down -v` em produção, pois
-isso remove o banco. Como o padrão disponibiliza HTTP na rede, use apenas em
-uma rede confiável. Para restringir novamente à própria máquina, execute com
-`NOTES_BIND_ADDRESS=127.0.0.1`. Para uso remoto, coloque o serviço atrás de
-HTTPS, defina `NOTES_HTTPS=1` e não exponha diretamente a porta do container.
+`docker compose down` preserva `data/notes.sqlite`. Faça backup da pasta `data`
+antes de atualizações importantes. Como o padrão disponibiliza HTTP na rede,
+use apenas em uma rede confiável. Para restringir novamente à própria máquina,
+execute com `NOTES_BIND_ADDRESS=127.0.0.1`. Para uso remoto, coloque o serviço
+atrás de HTTPS, defina `NOTES_HTTPS=1` e não exponha diretamente a porta do
+container.
 
 ## Imagens Docker
 
@@ -178,7 +180,7 @@ SKIP_TESTS=1 ./deploy.sh
 
 O arquivo [docker-compose.production.yml](docker-compose.production.yml) aplica
 filesystem somente para leitura, capabilities removidas, limite de processos,
-limite de memória, rotação de logs e volume persistente para os dados.
+limite de memória, rotação de logs e bind mount persistente em `./data`.
 
 ## Operação
 
@@ -192,7 +194,7 @@ limite de memória, rotação de logs e volume persistente para os dados.
 - O cadastro é aberto para quem alcançar o serviço. Em uma publicação externa,
   limite o acesso na rede ou em um proxy HTTPS.
 - O SQLite usa WAL. Para backup consistente, pare o container antes de copiar o
-  volume ou utilize uma ferramenta de backup compatível com SQLite.
+  diretório `data` ou utilize uma ferramenta de backup compatível com SQLite.
 
 Não há fluxo de execução ou testes diretamente no host; use sempre os comandos
 Docker Compose documentados acima.

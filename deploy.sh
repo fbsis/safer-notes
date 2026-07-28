@@ -6,6 +6,7 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="${NOTES_PROJECT_NAME:-notes-production}"
 PRODUCTION_FILE="${ROOT_DIR}/docker-compose.production.yml"
 TEST_FILE="${ROOT_DIR}/docker-compose.test.yml"
+DATA_DIR="${ROOT_DIR}/data"
 WAIT_TIMEOUT="${DEPLOY_WAIT_TIMEOUT:-90}"
 SKIP_TESTS="${SKIP_TESTS:-0}"
 
@@ -33,6 +34,9 @@ fi
 
 docker info >/dev/null
 docker compose version >/dev/null
+
+mkdir -p "${DATA_DIR}"
+chmod 700 "${DATA_DIR}"
 
 log "Validando configurações Docker Compose"
 "${PRODUCTION[@]}" config --quiet
