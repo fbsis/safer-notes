@@ -1,0 +1,7 @@
+quando eu fiz, ele voltou a funcionar
+echo RP08 > /proc/acpi/wakeup
+echo RP21 > /proc/acpi/wakeup
+
+
+grep -E 'RP08|RP21' /proc/acpi/wakeup
+systemctl suspend
