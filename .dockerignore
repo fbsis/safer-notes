@@ -10,3 +10,6 @@ npm-debug.log*
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+docker-compose.yml
+docker.compose.dev.yml
+docker-compose.test.yml

@@ -12,7 +12,10 @@ sensíveis criptografados por usuário.
 - `src/proxy.ts`: CSP com nonce e cabeçalhos de segurança;
 - `test`: teste de integração que sobe o servidor Next.js real;
 - `Dockerfile`: imagem standalone de produção;
-- `Dockerfile.test`: build e suíte isolada.
+- `Dockerfile.test`: build e suíte isolada;
+- `docker-compose.yml`: instalação pública usando a imagem `latest`;
+- `docker.compose.dev.yml`: build e execução local a partir do código;
+- `docker-compose.test.yml`: testes automatizados em container isolado.
 
 O build usa `output: "standalone"` do Next.js. O banco persistente fica em
 `data/notes.sqlite`, ao lado dos arquivos Compose. A pasta `data/` não é
@@ -93,26 +96,21 @@ Compose; não é necessário instalar Node.js, npm, OpenSSL ou SQLite.
 
 ### Instalação sem clonar o repositório
 
-A imagem versionada é publicada em `ghcr.io/fbsis/safer-notes`. Para instalar,
-baixe somente o Compose standalone:
+A imagem pública é publicada em `ghcr.io/fbsis/safer-notes`. Para instalar,
+baixe somente o arquivo `docker-compose.yml`:
 
 ```bash
 mkdir safer-notes
 cd safer-notes
-curl -fsSLo compose.yml \
-  https://raw.githubusercontent.com/fbsis/safer-notes/main/safer-notes.compose.yml
+curl -fsSLO \
+  https://raw.githubusercontent.com/fbsis/safer-notes/main/docker-compose.yml
 docker compose up -d
 ```
 
-O arquivo usa exclusivamente a imagem `ghcr.io/fbsis/safer-notes:2.0.0`; não
-há `build:` nem dependência do código-fonte. O banco é criado em
-`./data/notes.sqlite` no diretório em que o Compose foi salvo.
-
-Para usar outra versão publicada sem editar o arquivo:
-
-```bash
-NOTES_VERSION=2.1.0 docker compose up -d
-```
+O arquivo usa exclusivamente a imagem `ghcr.io/fbsis/safer-notes:latest`; não
+há `build:` nem dependência do código-fonte. A política `pull_policy: always`
+consulta a imagem mais recente sempre que `docker compose up -d` é executado.
+O banco é criado em `./data/notes.sqlite`, no mesmo diretório do Compose.
 
 Porta, binding, tempo de inatividade e diretório também podem ser substituídos:
 
@@ -124,12 +122,26 @@ NOTES_DATA_DIR=/srv/safer-notes/data \
 docker compose up -d
 ```
 
-As imagens são publicadas para `linux/amd64` e `linux/arm64`. A tag `latest` não
-é gerada: toda instalação fica associada a uma versão explícita.
+As imagens são publicadas para `linux/amd64` e `linux/arm64`. Cada release gera
+tags versionadas e também atualiza `latest`.
 
-### Desenvolvimento e build local
+Para atualizar uma instalação existente:
 
-Para construir a imagem diretamente a partir do código do repositório:
+```bash
+docker compose up -d
+```
+
+### Desenvolvimento e testes locais
+
+Quem clonou o repositório deve usar `docker.compose.dev.yml` para construir e
+executar o código local:
+
+```bash
+docker compose -f docker.compose.dev.yml up -d --build
+```
+
+O script abaixo executa os testes isolados, constrói a imagem local, atualiza o
+serviço de desenvolvimento e aguarda o healthcheck:
 
 ```bash
 ./deploy.sh
@@ -158,8 +170,8 @@ Variáveis disponíveis:
 Para acompanhar ou encerrar:
 
 ```bash
-docker compose -f docker-compose.production.yml logs -f notes
-docker compose -f docker-compose.production.yml down
+docker compose -f docker.compose.dev.yml logs -f notes
+docker compose -f docker.compose.dev.yml down
 ```
 
 `docker compose down` preserva `data/notes.sqlite`. Faça backup da pasta `data`
@@ -191,18 +203,19 @@ docker build -f Dockerfile.test -t notes:test .
 docker run --rm --network none --read-only --tmpfs /tmp notes:test
 ```
 
-### Produção
+### Imagem local
 
-A imagem de produção contém apenas a aplicação e as dependências necessárias,
-usa o servidor standalone do Next.js, executa como usuário não-root e possui
-healthcheck:
+A imagem local contém apenas a aplicação e as dependências necessárias, usa o
+servidor standalone do Next.js, executa como usuário não-root e possui
+healthcheck. Ela é construída pelo Compose de desenvolvimento:
 
 ```bash
-./deploy.sh
+docker compose -f docker.compose.dev.yml up -d --build
 ```
 
-O deploy valida os dois arquivos Compose, executa os testes isolados, constrói
-a imagem de produção, atualiza os serviços e aguarda o healthcheck. Opções:
+O `deploy.sh` valida os Compose de desenvolvimento e testes, executa a suíte
+isolada, constrói a imagem local, atualiza o serviço e aguarda o healthcheck.
+Opções:
 
 ```bash
 # Porta ou endereço de publicação
@@ -218,19 +231,21 @@ NOTES_IDLE_MINUTES=5 ./deploy.sh
 SKIP_TESTS=1 ./deploy.sh
 ```
 
-O arquivo [docker-compose.production.yml](docker-compose.production.yml) aplica
-filesystem somente para leitura, capabilities removidas, limite de processos,
-limite de memória, rotação de logs e bind mount persistente em `./data`.
+Os arquivos [docker-compose.yml](docker-compose.yml) e
+[docker.compose.dev.yml](docker.compose.dev.yml) aplicam filesystem somente
+para leitura, capabilities removidas, limite de processos, limite de memória,
+rotação de logs e bind mount persistente em `./data`.
 
 ### Publicação de versões
 
 O workflow `.github/workflows/publish-image.yml` executa os testes e publica a
-imagem no GitHub Container Registry quando uma tag SemVer é enviada:
+imagem no GitHub Container Registry quando uma tag SemVer é enviada. Além das
+tags da versão, cada publicação atualiza `latest`:
 
 ```bash
-git tag -a v2.0.0 -m "safer-notes 2.0.0"
+git tag -a v2.0.1 -m "safer-notes 2.0.1"
 git push origin main
-git push origin v2.0.0
+git push origin v2.0.1
 ```
 
 A primeira publicação do pacote no GHCR é privada por padrão. Para permitir

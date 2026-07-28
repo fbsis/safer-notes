@@ -4,13 +4,13 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="${NOTES_PROJECT_NAME:-notes-production}"
-PRODUCTION_FILE="${ROOT_DIR}/docker-compose.production.yml"
+DEV_FILE="${ROOT_DIR}/docker.compose.dev.yml"
 TEST_FILE="${ROOT_DIR}/docker-compose.test.yml"
 DATA_DIR="${ROOT_DIR}/data"
 WAIT_TIMEOUT="${DEPLOY_WAIT_TIMEOUT:-90}"
 SKIP_TESTS="${SKIP_TESTS:-0}"
 
-PRODUCTION=(docker compose -p "${PROJECT_NAME}" -f "${PRODUCTION_FILE}")
+DEV=(docker compose -p "${PROJECT_NAME}" -f "${DEV_FILE}")
 TESTS=(docker compose -f "${TEST_FILE}")
 
 log() {
@@ -20,8 +20,8 @@ log() {
 show_failure_context() {
   local exit_code=$?
   printf '\nDeploy interrompido (código %s).\n' "${exit_code}" >&2
-  "${PRODUCTION[@]}" ps >&2 || true
-  "${PRODUCTION[@]}" logs --tail=100 notes >&2 || true
+  "${DEV[@]}" ps >&2 || true
+  "${DEV[@]}" logs --tail=100 notes >&2 || true
   exit "${exit_code}"
 }
 
@@ -39,7 +39,7 @@ mkdir -p "${DATA_DIR}"
 chmod 700 "${DATA_DIR}"
 
 log "Validando configurações Docker Compose"
-"${PRODUCTION[@]}" config --quiet
+"${DEV[@]}" config --quiet
 "${TESTS[@]}" config --quiet
 
 if [[ "${SKIP_TESTS}" != "1" ]]; then
@@ -49,15 +49,15 @@ else
   log "Testes ignorados por SKIP_TESTS=1"
 fi
 
-log "Construindo imagem de produção"
-"${PRODUCTION[@]}" build --pull notes
+log "Construindo imagem local"
+"${DEV[@]}" build --pull notes
 
-log "Atualizando serviços de produção"
-"${PRODUCTION[@]}" up -d --remove-orphans --force-recreate
+log "Atualizando serviço local"
+"${DEV[@]}" up -d --remove-orphans --force-recreate
 
-container_id="$("${PRODUCTION[@]}" ps -q notes)"
+container_id="$("${DEV[@]}" ps -q notes)"
 if [[ -z "${container_id}" ]]; then
-  printf 'Container de produção não foi criado.\n' >&2
+  printf 'Container local não foi criado.\n' >&2
   exit 1
 fi
 

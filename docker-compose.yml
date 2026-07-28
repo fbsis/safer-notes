@@ -1,19 +1,18 @@
-name: notes
+name: safer-notes
 
 services:
   notes:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: notes:production
+    image: ghcr.io/fbsis/safer-notes:latest
+    pull_policy: always
+    init: true
     environment:
       HOSTNAME: 0.0.0.0
       PORT: 3001
       NOTES_DB: /app/data/notes.sqlite
-      NOTES_HTTPS: "0"
+      NOTES_HTTPS: ${NOTES_HTTPS:-0}
       NOTES_IDLE_MINUTES: ${NOTES_IDLE_MINUTES:-15}
     volumes:
-      - ./data:/app/data
+      - ${NOTES_DATA_DIR:-./data}:/app/data
     ports:
       - "${NOTES_BIND_ADDRESS:-0.0.0.0}:${NOTES_PORT:-3002}:3001"
     read_only: true
@@ -23,4 +22,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    pids_limit: 100
+    mem_limit: 1g
+    cpus: 2
+    stop_grace_period: 15s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

@@ -1,9 +1,11 @@
-name: safer-notes
+name: safer-notes-dev
 
 services:
   notes:
-    image: ghcr.io/fbsis/safer-notes:${NOTES_VERSION:-2.0.0}
-    pull_policy: ${NOTES_PULL_POLICY:-always}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: safer-notes:dev
     init: true
     environment:
       HOSTNAME: 0.0.0.0
