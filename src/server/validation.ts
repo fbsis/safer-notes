@@ -2,6 +2,8 @@ import { HttpError } from "./errors";
 import type { NotePayload } from "./types";
 
 export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+export const NOTE_JSON_OVERHEAD_BYTES = 64 * 1024;
+const DEFAULT_MAX_NOTE_MIB = 50;
 
 export function normalizeUsername(username: unknown) {
   if (typeof username !== "string") throw new HttpError(400, "Usuário inválido.");
@@ -31,11 +33,37 @@ export function validateNotePayload(input: unknown): NotePayload {
   if (typeof candidate.markdown !== "string") {
     throw new HttpError(400, "Conteúdo Markdown inválido.");
   }
+  if (/data:[^;,\s]+;base64,/i.test(candidate.markdown)) {
+    throw new HttpError(
+      400,
+      "Conteúdo base64 não é permitido no Markdown. Envie o arquivo como anexo."
+    );
+  }
   const payload = { title, markdown: candidate.markdown };
-  if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 900 * 1024) {
-    throw new HttpError(413, "A nota excede o limite permitido.");
+  const maxNoteMiB = configuredMaxNoteMiB();
+  if (Buffer.byteLength(JSON.stringify(payload), "utf8") > maxNoteMiB * 1024 * 1024) {
+    throw new HttpError(
+      413,
+      `A nota excede o limite de ${maxNoteMiB} MiB. Adicione imagens e arquivos como anexos.`
+    );
   }
   return payload;
+}
+
+export function configuredMaxNoteMiB() {
+  const configured = process.env.NOTES_MAX_NOTE_MB;
+  if (configured === undefined || configured.trim() === "") {
+    return DEFAULT_MAX_NOTE_MIB;
+  }
+  const value = Number(configured);
+  if (!Number.isSafeInteger(value) || value < 1 || value > 50) {
+    throw new Error("NOTES_MAX_NOTE_MB deve ser um inteiro entre 1 e 50.");
+  }
+  return value;
+}
+
+export function configuredMaxNoteRequestBytes() {
+  return configuredMaxNoteMiB() * 1024 * 1024 + NOTE_JSON_OVERHEAD_BYTES;
 }
 
 export function validateParentId(value: unknown) {

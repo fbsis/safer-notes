@@ -64,6 +64,10 @@ anexos sem descriptografar os bytes do arquivo.
   conteúdo criptografado da nota;
 - arquivos arrastados para o editor seguem o mesmo fluxo criptografado do botão
   de anexos;
+- imagens e arquivos colados da área de transferência também são enviados como
+  anexos criptografados, em vez de virar base64 dentro do Markdown;
+- imagens base64 que já tenham entrado no editor são detectadas no salvamento,
+  enviadas à tabela de anexos e substituídas pela URL interna criptografada;
 - protocolos ativos como `javascript:` e `data:` são rejeitados no drop;
 - PNG, JPEG, GIF, WebP e AVIF são exibidos dentro do editor;
 - arquivos genéricos aparecem como links de consulta e são baixados como
@@ -169,6 +173,7 @@ Variáveis disponíveis:
 | `NOTES_DB` | `data/notes.sqlite` | Caminho do SQLite |
 | `NOTES_HTTPS` | `0` | Use `1` atrás de HTTPS para ativar cookie `Secure` |
 | `NOTES_IDLE_MINUTES` | `15` | Minutos sem interação antes do bloqueio automático |
+| `NOTES_MAX_NOTE_MB` | `50` | Limite do título + Markdown, entre 1 e 50 MiB |
 
 Para acompanhar ou encerrar:
 

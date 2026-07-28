@@ -52,7 +52,8 @@ async function startNext(databasePath) {
         NODE_ENV: "production",
         NEXT_TELEMETRY_DISABLED: "1",
         NOTES_DB: databasePath,
-        NOTES_IDLE_MINUTES: "0.05"
+        NOTES_IDLE_MINUTES: "0.05",
+        NOTES_MAX_NOTE_MB: "1"
       },
       stdio: ["ignore", "pipe", "pipe"]
     }
@@ -90,7 +91,9 @@ async function stopNext(child) {
 }
 
 test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
-  const { readDraggedUrl } = await import("../src/components/drop-utils.mjs");
+  const { base64DataUrlToFile, readClipboardFiles, readDraggedUrl } = await import(
+    "../src/components/drop-utils.mjs"
+  );
   const transfer = (uri, plain = "") => ({
     getData(type) {
       return type === "text/uri-list" ? uri : plain;
@@ -102,6 +105,22 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   );
   assert.equal(readDraggedUrl(transfer("javascript:alert(1)")), null);
   assert.equal(readDraggedUrl(transfer("", "data:text/html,danger")), null);
+  const pastedFile = { name: "clipboard.png" };
+  assert.deepEqual(
+    readClipboardFiles({
+      items: [
+        { kind: "string", getAsFile: () => null },
+        { kind: "file", getAsFile: () => pastedFile }
+      ]
+    }),
+    [pastedFile]
+  );
+  const convertedImage = await base64DataUrlToFile(
+    "data:image/png;base64,iVBORw0KGgo=",
+    2
+  );
+  assert.equal(convertedImage.type, "image/png");
+  assert.match(convertedImage.name, /-2\.png$/);
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "next-notes-"));
   const databasePath = path.join(directory, "notes.sqlite");
@@ -177,6 +196,32 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     primaryNote.markdown,
     "# SEGREDO-CONTEUDO-NAO-DEVE-APARECER\n\nTexto com **negrito**."
   );
+
+  result = await request(primary, `/api/notes/${primaryNote.id}`, {
+    method: "PATCH",
+    headers: { "X-CSRF-Token": primaryCsrf },
+    body: {
+      title: primaryNote.title,
+      markdown: "![base64](data:image/png;base64,iVBORw0KGgo=)",
+      parentId: null,
+      revision: primaryNote.revision
+    }
+  });
+  assert.equal(result.response.status, 400);
+  assert.match(result.data.message, /base64 não é permitido/);
+
+  result = await request(primary, `/api/notes/${primaryNote.id}`, {
+    method: "PATCH",
+    headers: { "X-CSRF-Token": primaryCsrf },
+    body: {
+      title: primaryNote.title,
+      markdown: "x".repeat(1024 * 1024),
+      parentId: null,
+      revision: primaryNote.revision
+    }
+  });
+  assert.equal(result.response.status, 413);
+  assert.match(result.data.message, /limite de 1 MiB/);
 
   result = await request(primary, `/api/notes/${primaryNote.id}`, {
     method: "PATCH",

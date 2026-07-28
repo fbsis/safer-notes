@@ -1,6 +1,6 @@
 {
   "name": "encrypted-notes",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "private": true,
   "description": "Cofre multiusuário de notas criptografadas em Next.js",
   "scripts": {

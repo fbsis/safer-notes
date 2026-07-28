@@ -30,7 +30,8 @@ ENV NODE_ENV=production \
     PORT=3001 \
     NOTES_DB=/app/data/notes.sqlite \
     NOTES_HTTPS=0 \
-    NOTES_IDLE_MINUTES=15
+    NOTES_IDLE_MINUTES=15 \
+    NOTES_MAX_NOTE_MB=50
 
 WORKDIR /app
 

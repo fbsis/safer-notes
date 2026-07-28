@@ -3,17 +3,17 @@ import { HttpError } from "./errors";
 
 const BODY_LIMIT = 1024 * 1024;
 
-export async function readJson(request: Request) {
+export async function readJson(request: Request, bodyLimit = BODY_LIMIT) {
   const contentType = request.headers.get("content-type")?.split(";")[0].trim();
   if (contentType !== "application/json") {
     throw new HttpError(415, "Content-Type deve ser application/json.");
   }
   const declaredLength = Number(request.headers.get("content-length") ?? 0);
-  if (declaredLength > BODY_LIMIT) {
+  if (declaredLength > bodyLimit) {
     throw new HttpError(413, "Requisição muito grande.");
   }
   const text = await request.text();
-  if (Buffer.byteLength(text, "utf8") > BODY_LIMIT) {
+  if (Buffer.byteLength(text, "utf8") > bodyLimit) {
     throw new HttpError(413, "Requisição muito grande.");
   }
   try {

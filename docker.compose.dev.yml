@@ -13,6 +13,7 @@ services:
       NOTES_DB: /app/data/notes.sqlite
       NOTES_HTTPS: ${NOTES_HTTPS:-0}
       NOTES_IDLE_MINUTES: ${NOTES_IDLE_MINUTES:-15}
+      NOTES_MAX_NOTE_MB: ${NOTES_MAX_NOTE_MB:-50}
     volumes:
       - ${NOTES_DATA_DIR:-./data}:/app/data
     ports:

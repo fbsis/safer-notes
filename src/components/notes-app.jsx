@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { readDraggedUrl } from "./drop-utils.mjs";
+import {
+  base64DataUrlToFile,
+  readClipboardFiles,
+  readDraggedUrl
+} from "./drop-utils.mjs";
 import { editorToMarkdown, noteToDelta } from "./markdown-codec";
 
 class ApiError extends Error {
@@ -73,6 +77,9 @@ export default function NotesApp() {
   const selectedIdRef = useRef(selectedId);
   const csrfRef = useRef(csrfToken);
   const saveCurrentRef = useRef(null);
+  const uploadFilesRef = useRef(null);
+  const normalizeBase64ImagesRef = useRef(null);
+  const pasteHandlerRef = useRef(null);
   const selected = notes.find((note) => note.id === selectedId) || null;
 
   useEffect(() => { notesRef.current = notes; }, [notes]);
@@ -133,14 +140,15 @@ export default function NotesApp() {
     }
     saving.current = true;
     setSaveStatus("Salvando…");
-    const snapshot = {
-      id: note.id,
-      title: note.title.trim() || "Sem título",
-      markdown: editorToMarkdown(quill.current),
-      parentId: note.parentId || null,
-      revision: note.revision
-    };
     try {
+      await normalizeBase64ImagesRef.current?.();
+      const snapshot = {
+        id: note.id,
+        title: note.title.trim() || "Sem título",
+        markdown: editorToMarkdown(quill.current),
+        parentId: note.parentId || null,
+        revision: note.revision
+      };
       const result = await requestApi(`/api/notes/${snapshot.id}`, {
         method: "PATCH",
         csrfToken: csrfRef.current,
@@ -157,7 +165,7 @@ export default function NotesApp() {
       if (error.status === 401) handleLocked();
       else if (error.status === 409) {
         setVaultMessage({ text: "A nota mudou em outra sessão. A lista foi recarregada." });
-        await loadNotes(snapshot.id);
+        await loadNotes(note.id);
       } else {
         setVaultMessage({ text: error.message });
       }
@@ -196,12 +204,25 @@ export default function NotesApp() {
         }
       });
       quill.current.on("text-change", queueSave);
+      pasteHandlerRef.current = (event) => {
+        const files = readClipboardFiles(event.clipboardData);
+        if (files.length === 0) return;
+        event.preventDefault();
+        void uploadFilesRef.current?.(files);
+      };
+      quill.current.root.addEventListener("paste", pasteHandlerRef.current);
       const note = notesRef.current.find((item) => item.id === selectedIdRef.current);
       if (note) quill.current.setContents(noteToDelta(quill.current, note), "silent");
     });
     return () => {
       cancelled = true;
-      if (quill.current) quill.current.off("text-change", queueSave);
+      if (quill.current) {
+        quill.current.off("text-change", queueSave);
+        if (pasteHandlerRef.current) {
+          quill.current.root.removeEventListener("paste", pasteHandlerRef.current);
+        }
+      }
+      pasteHandlerRef.current = null;
       quill.current = null;
     };
   }, [queueSave, screen]);
@@ -347,23 +368,7 @@ export default function NotesApp() {
     setVaultMessage(null);
     try {
       for (const file of files) {
-        const form = new FormData();
-        form.set("file", file);
-        const response = await fetch(`/api/notes/${selected.id}/attachments`, {
-          method: "POST",
-          headers: { "X-CSRF-Token": csrfRef.current },
-          body: form
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new ApiError(
-            result.message || "Não foi possível enviar o anexo.",
-            response.status,
-            result.error
-          );
-        }
-
-        const attachment = result.attachment;
+        const attachment = await uploadAttachment(selected.id, file);
         const range = quill.current.getSelection(true) || {
           index: Math.max(0, quill.current.getLength() - 1),
           length: 0
@@ -392,6 +397,75 @@ export default function NotesApp() {
       setUploading(false);
     }
   }
+  uploadFilesRef.current = uploadFiles;
+
+  async function uploadAttachment(noteId, file) {
+    const form = new FormData();
+    form.set("file", file);
+    const response = await fetch(`/api/notes/${noteId}/attachments`, {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfRef.current },
+      body: form
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new ApiError(
+        result.message || "Não foi possível enviar o anexo.",
+        response.status,
+        result.error
+      );
+    }
+    return result.attachment;
+  }
+
+  async function normalizeBase64Images() {
+    const editor = quill.current;
+    const noteId = selectedIdRef.current;
+    if (!editor || !noteId) return;
+
+    const images = [];
+    let index = 0;
+    for (const operation of editor.getContents().ops || []) {
+      const length = typeof operation.insert === "string"
+        ? operation.insert.length
+        : 1;
+      const embeddedImage = operation.insert?.image;
+      const embeddedLink = operation.attributes?.link;
+      if (typeof embeddedImage === "string" && embeddedImage.startsWith("data:")) {
+        images.push({ index, kind: "image", length, value: embeddedImage });
+      } else if (
+        typeof embeddedLink === "string" &&
+        /^data:[^;,]+;base64,/i.test(embeddedLink)
+      ) {
+        images.push({ index, kind: "link", length, value: embeddedLink });
+      }
+      index += length;
+    }
+
+    for (const [position, item] of images.reverse().entries()) {
+      const file = await base64DataUrlToFile(item.value, position + 1);
+      const attachment = await uploadAttachment(noteId, file);
+      if (item.kind === "image" && attachment.isImage) {
+        editor.deleteText(item.index, item.length, "silent");
+        editor.insertEmbed(item.index, "image", attachment.url, "silent");
+      } else if (item.kind === "image") {
+        const label = `📎 ${attachment.name}`;
+        editor.deleteText(item.index, item.length, "silent");
+        editor.insertText(item.index, label, { link: attachment.url }, "silent");
+      } else {
+        editor.formatText(item.index, item.length, "link", attachment.url, "silent");
+      }
+      setAttachments((current) => [...current, attachment]);
+    }
+
+    if (images.length > 0) {
+      setVaultMessage({
+        text: `${images.length} item(ns) base64 convertido(s) em anexo(s) criptografado(s).`,
+        success: true
+      });
+    }
+  }
+  normalizeBase64ImagesRef.current = normalizeBase64Images;
 
   async function handleEditorDrop(event) {
     event.preventDefault();
