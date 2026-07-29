@@ -110,6 +110,31 @@ próxima inicialização.
   comprometido enquanto o cofre estiver aberto ainda poderá observar o
   conteúdo.
 
+## Cofres identificados pela senha
+
+O fluxo normal não usa nome de usuário: cada senha mestra identifica e abre um
+único cofre. Ao criar ou trocar a senha, o servidor rejeita uma senha que já
+abra outro cofre. Como a senha também funciona como identificação, use uma
+senha longa, aleatória e exclusiva para este serviço.
+
+Bancos criados por versões anteriores são compatíveis sem migração das notas,
+anexos ou chaves:
+
+- os nomes antigos permanecem somente como informação interna de
+  compatibilidade e não são enviados ao frontend;
+- na primeira abertura após reiniciar o serviço, o servidor testa a senha
+  diretamente contra os cofres e mantém o resultado apenas em memória para
+  acelerar as próximas aberturas. Essa primeira abertura pode demorar mais
+  conforme aumenta a quantidade de cofres;
+- se dois cofres antigos já usavam exatamente a mesma senha, a tela solicita a
+  identificação antiga somente nessa situação. Depois de entrar, altere a
+  senha de um deles para que ambos voltem ao fluxo de senha única;
+- novos cofres gravam um UUID aleatório no campo legado, nunca um nome
+  informado pela pessoa.
+
+Trocar a senha continua apenas recriptografando a chave de dados do cofre. As
+notas e os anexos não são regravados, reduzindo o risco durante a operação.
+
 ## Execução
 
 Todo o projeto roda dentro do Docker. O host precisa apenas de Docker com
@@ -173,8 +198,8 @@ serviço de desenvolvimento e aguarda o healthcheck:
 ```
 
 Acesse `http://127.0.0.1:3002`. Na tela inicial, escolha **Criar novo cofre**,
-informe um nome de usuário e uma senha mestra. Não existe token de configuração,
-administrador global ou fluxo de convites.
+informe e confirme somente a senha mestra. Não existe token de configuração,
+nome de usuário obrigatório, administrador global ou fluxo de convites.
 
 O padrão publica a porta em todas as interfaces. Em outro dispositivo da rede,
 use o IP do servidor, por exemplo `http://192.168.1.190:3002`. O endereço

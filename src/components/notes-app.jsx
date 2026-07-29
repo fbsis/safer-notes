@@ -52,7 +52,7 @@ export default function NotesApp() {
   const [message, setMessage] = useState(null);
   const [vaultMessage, setVaultMessage] = useState(null);
   const [csrfToken, setCsrfToken] = useState("");
-  const [user, setUser] = useState(null);
+  const [legacyUsernameRequired, setLegacyUsernameRequired] = useState(false);
   const [notes, setNotes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [collapsedIds, setCollapsedIds] = useState(() => new Set());
@@ -91,7 +91,7 @@ export default function NotesApp() {
 
   const handleLocked = useCallback((text = "A sessão foi bloqueada. Informe a senha novamente.") => {
     setCsrfToken("");
-    setUser(null);
+    setLegacyUsernameRequired(false);
     setNotes([]);
     setSelectedId(null);
     setCollapsedIds(new Set());
@@ -122,7 +122,6 @@ export default function NotesApp() {
         }
         if (status.authenticated) {
           setCsrfToken(status.csrfToken);
-          setUser(status.user);
           setScreen("vault");
           await loadNotes();
         } else {
@@ -287,11 +286,12 @@ export default function NotesApp() {
       setMessage({ text: "A confirmação da senha não confere." });
       return;
     }
-    const body = { username: values.username, password: values.password };
+    const body = { password: values.password };
+    if (values.username) body.username = values.username;
     try {
       const result = await requestApi(endpoint, { method: "POST", body });
       setCsrfToken(result.csrfToken);
-      setUser(result.user);
+      setLegacyUsernameRequired(false);
       setScreen("vault");
       form.reset();
       if (endpoint === "/api/register") history.replaceState(null, "", "/");
@@ -301,6 +301,9 @@ export default function NotesApp() {
       }
       await loadNotes();
     } catch (error) {
+      if (error.code === "ambiguous_password") {
+        setLegacyUsernameRequired(true);
+      }
       setMessage({ text: error.message });
     }
   }
@@ -658,18 +661,20 @@ export default function NotesApp() {
           </div>
           <Message value={message} />
           {screen === "register" && (
-            <AuthForm title="Criar cofre" submit="Criar meu cofre" confirm
+            <AuthForm title="Criar cofre" submit="Criar meu cofre"
               onSubmit={(event) => authenticate(event, "/api/register")}>
               <button type="button" className="secondary" onClick={() => {
-                history.replaceState(null, "", "/"); setScreen("login"); setMessage(null);
+                history.replaceState(null, "", "/"); setScreen("login");
+                setLegacyUsernameRequired(false); setMessage(null);
               }}>Voltar ao login</button>
             </AuthForm>
           )}
           {screen === "login" && (
             <AuthForm title="Desbloquear" submit="Abrir cofre"
+              legacyUsername={legacyUsernameRequired}
               onSubmit={(event) => authenticate(event, "/api/unlock")}>
               <button type="button" className="secondary" onClick={() => {
-                setScreen("register"); setMessage(null);
+                setScreen("register"); setLegacyUsernameRequired(false); setMessage(null);
               }}>Criar novo cofre</button>
             </AuthForm>
           )}
@@ -705,10 +710,10 @@ export default function NotesApp() {
             aria-hidden={!sidebarOpen} inert={sidebarOpen ? undefined : ""}>
             <div className="sidebar-workspace">
               <span className="workspace-avatar" aria-hidden="true">
-                {(user?.username || "C").slice(0, 1).toUpperCase()}
+                ◆
               </span>
               <div>
-                <strong>{user?.username}</strong>
+                <strong>Meu cofre</strong>
                 <small>Cofre privado</small>
               </div>
             </div>
@@ -873,14 +878,32 @@ export default function NotesApp() {
   );
 }
 
-function AuthForm({ title, submit, children, onSubmit }) {
+function AuthForm({ title, submit, children, legacyUsername = false, onSubmit }) {
+  const registering = title === "Criar cofre";
   return (
     <form className="stack" onSubmit={onSubmit}>
       <h2>{title}</h2>
-      <label>Usuário<input name="username" autoComplete="username" required autoFocus /></label>
-      <label>Senha mestra<input name="password" type="password" minLength={12} required /></label>
-      {title !== "Desbloquear" &&
-        <label>Confirmar senha<input name="confirmation" type="password" minLength={12} required /></label>}
+      {legacyUsername && (
+        <label>
+          Identificação antiga
+          <input name="username" autoComplete="username" required autoFocus />
+          <small className="field-help">
+            Use o antigo nome de usuário somente para separar cofres com a mesma senha.
+          </small>
+        </label>
+      )}
+      <label>
+        Senha mestra
+        <input name="password" type="password" minLength={12} required
+          autoFocus={!legacyUsername}
+          autoComplete={registering ? "new-password" : "current-password"} />
+      </label>
+      {registering &&
+        <label>
+          Confirmar senha
+          <input name="confirmation" type="password" minLength={12}
+            autoComplete="new-password" required />
+        </label>}
       <button type="submit">{submit}</button>
       {children}
     </form>

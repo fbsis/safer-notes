@@ -32,6 +32,9 @@ export class Vault {
   readonly database: DatabaseSync;
   private readonly statements: Record<string, StatementSync>;
   private readonly attachmentStorage: AttachmentStorage;
+  private readonly passwordCacheSecret = crypto.randomBytes(32);
+  private readonly passwordUserCache = new Map<string, string | null>();
+  private passwordScanQueue: Promise<void> = Promise.resolve();
 
   constructor(
     databasePath: string,
@@ -41,7 +44,9 @@ export class Vault {
     this.attachmentStorage = new AttachmentStorage(attachmentsPath);
     this.database = openDatabase(databasePath, this.attachmentStorage);
     this.statements = {
-      findUser: this.database.prepare("SELECT * FROM users WHERE username = ?"),
+      findUserById: this.database.prepare("SELECT * FROM users WHERE id = ?"),
+      findUserByUsername: this.database.prepare("SELECT * FROM users WHERE username = ?"),
+      listUsers: this.database.prepare("SELECT * FROM users ORDER BY created_at, id"),
       insertUser: this.database.prepare(`
         INSERT INTO users (
           id, username, role, kdf_salt, kdf_n, kdf_r, kdf_p,
@@ -107,11 +112,19 @@ export class Vault {
     };
   }
 
-  findUser(username: string) {
-    return this.statements.findUser.get(username) as unknown as UserRow | undefined;
+  private findUserById(id: string) {
+    return this.statements.findUserById.get(id) as unknown as UserRow | undefined;
   }
 
-  private async buildUser(username: string, password: string) {
+  private findUserByUsername(username: string) {
+    return this.statements.findUserByUsername.get(username) as unknown as UserRow | undefined;
+  }
+
+  private listUsers() {
+    return this.statements.listUsers.all() as unknown as UserRow[];
+  }
+
+  private async buildUser(password: string) {
     const id = crypto.randomUUID();
     const salt = crypto.randomBytes(32);
     const passwordKey = await derivePasswordKey(password, salt, this.kdfParameters);
@@ -121,7 +134,7 @@ export class Vault {
     const now = new Date().toISOString();
     const user: UserRow = {
       id,
-      username,
+      username: id,
       role: "user",
       kdf_salt: salt,
       kdf_n: this.kdfParameters.N,
@@ -155,73 +168,184 @@ export class Vault {
     );
   }
 
-  async register(username: string, password: string) {
-    const created = await this.buildUser(username, password);
-    try {
-      this.insertUser(created.user);
-      return created;
-    } catch (error) {
-      created.dataKey.fill(0);
-      if (String((error as Error).message).includes("UNIQUE constraint failed: users.username")) {
-        throw new HttpError(409, "Esse usuário já existe.");
+  async register(password: string) {
+    return this.withPasswordScan(async () => {
+      const existing = await this.findPasswordMatches(password, undefined, 1);
+      if (existing.length > 0) {
+        existing[0].dataKey.fill(0);
+        throw new HttpError(
+          409,
+          "Essa senha já abre um cofre. Use outra senha ou desbloqueie o cofre existente.",
+          "password_in_use"
+        );
       }
-      throw error;
-    }
+
+      const created = await this.buildUser(password);
+      try {
+        this.insertUser(created.user);
+        this.passwordUserCache.set(
+          this.passwordFingerprint(password),
+          created.user.id
+        );
+        return created;
+      } catch (error) {
+        created.dataKey.fill(0);
+        throw error;
+      }
+    });
   }
 
-  async authenticate(username: string, password: string) {
-    const user = this.findUser(username);
+  async authenticate(password: string, legacyUsername?: string) {
+    if (legacyUsername) {
+      const user = this.findUserByUsername(legacyUsername);
+      const unlocked = user
+        ? await this.tryUnlockUser(user, password)
+        : undefined;
+      if (!unlocked) throw new Error("invalid credentials");
+      return unlocked;
+    }
+
+    const fingerprint = this.passwordFingerprint(password);
+    const cachedUserId = this.passwordUserCache.get(fingerprint);
+    if (cachedUserId === null) throw this.ambiguousPasswordError();
+    if (cachedUserId) {
+      const cachedUser = this.findUserById(cachedUserId);
+      const unlocked = cachedUser
+        ? await this.tryUnlockUser(cachedUser, password)
+        : undefined;
+      if (unlocked) return unlocked;
+      this.passwordUserCache.delete(fingerprint);
+    }
+
+    return this.withPasswordScan(async () => {
+      const refreshedUserId = this.passwordUserCache.get(fingerprint);
+      if (refreshedUserId === null) throw this.ambiguousPasswordError();
+      if (refreshedUserId) {
+        const refreshedUser = this.findUserById(refreshedUserId);
+        const unlocked = refreshedUser
+          ? await this.tryUnlockUser(refreshedUser, password)
+          : undefined;
+        if (unlocked) return unlocked;
+        this.passwordUserCache.delete(fingerprint);
+      }
+
+      const matches = await this.findPasswordMatches(password, undefined, 2);
+      if (matches.length === 0) throw new Error("invalid credentials");
+      if (matches.length > 1) {
+        for (const match of matches) match.dataKey.fill(0);
+        this.passwordUserCache.set(fingerprint, null);
+        throw this.ambiguousPasswordError();
+      }
+
+      this.passwordUserCache.set(fingerprint, matches[0].user.id);
+      return matches[0];
+    });
+  }
+
+  private async tryUnlockUser(user: UserRow, password: string) {
     let passwordKey: Buffer | undefined;
     try {
-      const salt = user ? user.kdf_salt : crypto.randomBytes(32);
-      const parameters = user
-        ? { N: user.kdf_n, r: user.kdf_r, p: user.kdf_p }
-        : SCRYPT_PARAMS;
-      passwordKey = await derivePasswordKey(password, salt, parameters);
-      if (!user) throw new Error("invalid credentials");
+      passwordKey = await derivePasswordKey(password, user.kdf_salt, {
+        N: user.kdf_n,
+        r: user.kdf_r,
+        p: user.kdf_p
+      });
       return { user, dataKey: unwrapDataKey(user, passwordKey) };
+    } catch {
+      return undefined;
     } finally {
       passwordKey?.fill(0);
     }
   }
 
-  async changePassword(username: string, currentPassword: string, newPassword: string) {
-    const user = this.findUser(username);
-    if (!user) throw new HttpError(401, "Senha atual inválida.");
-    let oldKey: Buffer | undefined;
-    let dataKey: Buffer | undefined;
-    try {
-      oldKey = await derivePasswordKey(currentPassword, user.kdf_salt, {
-        N: user.kdf_n,
-        r: user.kdf_r,
-        p: user.kdf_p
-      });
-      dataKey = unwrapDataKey(user, oldKey);
-    } catch {
-      throw new HttpError(401, "Senha atual inválida.");
-    } finally {
-      oldKey?.fill(0);
+  private async findPasswordMatches(
+    password: string,
+    excludedUserId?: string,
+    limit = Number.POSITIVE_INFINITY
+  ) {
+    const matches: Array<{ user: UserRow; dataKey: Buffer }> = [];
+    for (const user of this.listUsers()) {
+      if (user.id === excludedUserId) continue;
+      const unlocked = await this.tryUnlockUser(user, password);
+      if (!unlocked) continue;
+      matches.push(unlocked);
+      if (matches.length >= limit) break;
     }
+    return matches;
+  }
 
-    let newKey: Buffer | undefined;
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    return this.withPasswordScan(async () => {
+      const user = this.findUserById(userId);
+      const unlocked = user
+        ? await this.tryUnlockUser(user, currentPassword)
+        : undefined;
+      if (!unlocked) throw new HttpError(401, "Senha atual inválida.");
+
+      let newKey: Buffer | undefined;
+      try {
+        const existing = await this.findPasswordMatches(newPassword, userId, 1);
+        if (existing.length > 0) {
+          existing[0].dataKey.fill(0);
+          throw new HttpError(
+            409,
+            "Essa nova senha já abre outro cofre. Escolha uma senha diferente.",
+            "password_in_use"
+          );
+        }
+
+        const newSalt = crypto.randomBytes(32);
+        newKey = await derivePasswordKey(newPassword, newSalt, this.kdfParameters);
+        const wrapped = wrapDataKey(unlocked.user.id, unlocked.dataKey, newKey);
+        this.statements.updatePassword.run(
+          newSalt,
+          this.kdfParameters.N,
+          this.kdfParameters.r,
+          this.kdfParameters.p,
+          wrapped.ciphertext,
+          wrapped.iv,
+          wrapped.tag,
+          new Date().toISOString(),
+          unlocked.user.id
+        );
+        this.passwordUserCache.delete(this.passwordFingerprint(currentPassword));
+        this.passwordUserCache.set(
+          this.passwordFingerprint(newPassword),
+          unlocked.user.id
+        );
+      } finally {
+        newKey?.fill(0);
+        unlocked.dataKey.fill(0);
+      }
+    });
+  }
+
+  private passwordFingerprint(password: string) {
+    return crypto
+      .createHmac("sha256", this.passwordCacheSecret)
+      .update(password.normalize("NFKC"), "utf8")
+      .digest("base64url");
+  }
+
+  private ambiguousPasswordError() {
+    return new HttpError(
+      409,
+      "Mais de um cofre antigo usa essa senha. Informe a identificação antiga para escolher um deles e depois altere sua senha.",
+      "ambiguous_password"
+    );
+  }
+
+  private async withPasswordScan<T>(callback: () => Promise<T>): Promise<T> {
+    const previous = this.passwordScanQueue;
+    let release!: () => void;
+    this.passwordScanQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
     try {
-      const newSalt = crypto.randomBytes(32);
-      newKey = await derivePasswordKey(newPassword, newSalt, this.kdfParameters);
-      const wrapped = wrapDataKey(user.id, dataKey, newKey);
-      this.statements.updatePassword.run(
-        newSalt,
-        this.kdfParameters.N,
-        this.kdfParameters.r,
-        this.kdfParameters.p,
-        wrapped.ciphertext,
-        wrapped.iv,
-        wrapped.tag,
-        new Date().toISOString(),
-        user.id
-      );
+      return await callback();
     } finally {
-      newKey?.fill(0);
-      dataKey?.fill(0);
+      release();
     }
   }
 

@@ -13,8 +13,7 @@ export function GET(request: Request) {
       idleTimeoutMs,
       ...(session
         ? {
-            csrfToken: session.csrfToken,
-            user: { username: session.username }
+            csrfToken: session.csrfToken
           }
         : {})
     });

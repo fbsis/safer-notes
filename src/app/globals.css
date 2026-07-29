@@ -125,6 +125,12 @@ p {
   gap: 1rem;
 }
 
+.field-help {
+  color: #718096;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
 .message {
   margin: 1rem;
   padding: 0.75rem 1rem;

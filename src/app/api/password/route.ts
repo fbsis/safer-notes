@@ -14,7 +14,7 @@ export function POST(request: Request) {
     validatePassword(body.currentPassword);
     validatePassword(body.newPassword);
     await runtime.vault.changePassword(
-      session.username,
+      session.userId,
       body.currentPassword,
       body.newPassword
     );

@@ -9,7 +9,6 @@ const LOGIN_MAX_FAILURES = 5;
 export interface Session {
   token: string;
   userId: string;
-  username: string;
   dataKey: Buffer;
   csrfToken: string;
   lastActivity: number;
@@ -18,6 +17,7 @@ export interface Session {
 export class SessionManager {
   private readonly sessions = new Map<string, Omit<Session, "token">>();
   private readonly loginFailures = new Map<string, { count: number; startedAt: number }>();
+  private readonly attemptKeySecret = crypto.randomBytes(32);
   private readonly cleanupTimer: NodeJS.Timeout;
 
   constructor(private readonly idleMs: number) {
@@ -32,12 +32,11 @@ export class SessionManager {
     dataKey.fill(0);
     this.sessions.set(token, {
       userId: user.id,
-      username: user.username,
       dataKey: sessionKey,
       csrfToken,
       lastActivity: Date.now()
     });
-    return { token, csrfToken, user: { username: user.username } };
+    return { token, csrfToken };
   }
 
   get(request: Request, touch = true): Session | null {
@@ -78,11 +77,18 @@ export class SessionManager {
     }
   }
 
-  assertLoginAllowed(username: string) {
-    const record = this.loginFailures.get(username);
+  passwordAttemptKey(password: string) {
+    return crypto
+      .createHmac("sha256", this.attemptKeySecret)
+      .update(password.normalize("NFKC"), "utf8")
+      .digest("base64url");
+  }
+
+  assertLoginAllowed(attemptKey: string) {
+    const record = this.loginFailures.get(attemptKey);
     if (!record) return;
     if (Date.now() - record.startedAt >= LOGIN_WINDOW_MS) {
-      this.loginFailures.delete(username);
+      this.loginFailures.delete(attemptKey);
       return;
     }
     if (record.count >= LOGIN_MAX_FAILURES) {
@@ -94,17 +100,17 @@ export class SessionManager {
     }
   }
 
-  recordLoginFailure(username: string) {
-    const current = this.loginFailures.get(username);
+  recordLoginFailure(attemptKey: string) {
+    const current = this.loginFailures.get(attemptKey);
     if (!current || Date.now() - current.startedAt >= LOGIN_WINDOW_MS) {
-      this.loginFailures.set(username, { count: 1, startedAt: Date.now() });
+      this.loginFailures.set(attemptKey, { count: 1, startedAt: Date.now() });
     } else {
       current.count += 1;
     }
   }
 
-  clearLoginFailures(username: string) {
-    this.loginFailures.delete(username);
+  clearLoginFailures(attemptKey: string) {
+    this.loginFailures.delete(attemptKey);
   }
 
   private cleanup() {
@@ -112,9 +118,9 @@ export class SessionManager {
     for (const [token, session] of this.sessions) {
       if (now - session.lastActivity > this.idleMs) this.destroy(token);
     }
-    for (const [username, record] of this.loginFailures) {
+    for (const [attemptKey, record] of this.loginFailures) {
       if (now - record.startedAt >= LOGIN_WINDOW_MS) {
-        this.loginFailures.delete(username);
+        this.loginFailures.delete(attemptKey);
       }
     }
   }

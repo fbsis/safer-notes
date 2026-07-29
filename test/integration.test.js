@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
@@ -89,6 +90,48 @@ async function stopNext(child) {
       resolve();
     });
   });
+}
+
+function insertLegacyUser(databasePath, username, password) {
+  const id = crypto.randomUUID();
+  const salt = crypto.randomBytes(32);
+  const kdf = { N: 1024, r: 8, p: 1 };
+  const passwordKey = crypto.scryptSync(
+    password.normalize("NFKC"),
+    salt,
+    32,
+    { ...kdf, maxmem: 16 * 1024 * 1024 }
+  );
+  const dataKey = crypto.randomBytes(32);
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", passwordKey, iv);
+  cipher.setAAD(Buffer.from(`notes:user-dek:v1:${id}`, "utf8"));
+  const wrapped = Buffer.concat([cipher.update(dataKey), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  passwordKey.fill(0);
+  dataKey.fill(0);
+  const now = new Date().toISOString();
+  const database = new DatabaseSync(databasePath, { timeout: 5000 });
+  database.prepare(`
+    INSERT INTO users (
+      id, username, role, kdf_salt, kdf_n, kdf_r, kdf_p,
+      wrapped_dek, wrap_iv, wrap_tag, crypto_version, created_at, updated_at
+    ) VALUES (?, ?, 'user', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+  `).run(
+    id,
+    username,
+    salt,
+    kdf.N,
+    kdf.r,
+    kdf.p,
+    wrapped,
+    iv,
+    tag,
+    now,
+    now
+  );
+  database.close();
+  return id;
 }
 
 test("migra anexos criptografados do SQLite para arquivos sem descriptografar", async (t) => {
@@ -211,6 +254,74 @@ test("migra anexos criptografados do SQLite para arquivos sem descriptografar", 
   migrated.close();
 });
 
+test("cofre legado preserva notas e abre apenas com a senha após reiniciar", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "next-notes-legacy-login-"));
+  const databasePath = path.join(directory, "notes.sqlite");
+  let server = await startNext(databasePath);
+  t.after(async () => {
+    await stopNext(server.child);
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  const initial = createClient(server.baseUrl);
+  let result = await request(initial, "/api/register", {
+    method: "POST",
+    body: { password: "legacy-vault-password" }
+  });
+  assert.equal(result.response.status, 201);
+  result = await request(initial, "/api/notes", {
+    method: "POST",
+    headers: { "X-CSRF-Token": result.data.csrfToken },
+    body: {
+      title: "Nota anterior à atualização",
+      markdown: "Conteúdo que não pode ser perdido",
+      parentId: null
+    }
+  });
+  assert.equal(result.response.status, 201);
+  const createdNoteId = result.data.note.id;
+  const beforeRestart = new DatabaseSync(databasePath);
+  const ciphertextBefore = Buffer.from(
+    beforeRestart.prepare("SELECT ciphertext FROM notes WHERE id = ?")
+      .get(createdNoteId).ciphertext
+  );
+  const wrappedKeyBefore = Buffer.from(
+    beforeRestart.prepare("SELECT wrapped_dek FROM users").get().wrapped_dek
+  );
+  beforeRestart.close();
+  await stopNext(server.child);
+
+  const database = new DatabaseSync(databasePath);
+  database.exec("UPDATE users SET username = 'identificacao-antiga'");
+  database.close();
+
+  server = await startNext(databasePath);
+  const migrated = createClient(server.baseUrl);
+  result = await request(migrated, "/api/unlock", {
+    method: "POST",
+    body: { password: "legacy-vault-password" }
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal("user" in result.data, false);
+  result = await request(migrated, "/api/notes");
+  assert.equal(result.response.status, 200);
+  assert.equal(result.data.notes[0].title, "Nota anterior à atualização");
+  assert.equal(result.data.notes[0].markdown, "Conteúdo que não pode ser perdido");
+  const afterRestart = new DatabaseSync(databasePath);
+  assert.deepEqual(
+    Buffer.from(
+      afterRestart.prepare("SELECT ciphertext FROM notes WHERE id = ?")
+        .get(createdNoteId).ciphertext
+    ),
+    ciphertextBefore
+  );
+  assert.deepEqual(
+    Buffer.from(afterRestart.prepare("SELECT wrapped_dek FROM users").get().wrapped_dek),
+    wrappedKeyBefore
+  );
+  afterRestart.close();
+});
+
 test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   const { base64DataUrlToFile, readClipboardFiles, readDraggedUrl } = await import(
     "../src/components/drop-utils.mjs"
@@ -294,28 +405,32 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   result = await request(primary, "/api/register", {
     method: "POST",
     body: {
-      username: "primary",
       password: "primary-password-that-is-long"
     }
   });
   assert.equal(result.response.status, 201);
+  assert.equal("user" in result.data, false);
   const primaryCsrf = result.data.csrfToken;
   const accountDatabase = new DatabaseSync(databasePath);
-  assert.equal(
-    accountDatabase.prepare("SELECT role FROM users WHERE username = ?").get("primary").role,
-    "user"
-  );
+  const primaryAccount = accountDatabase
+    .prepare("SELECT id, username, role FROM users")
+    .get();
+  assert.equal(primaryAccount.role, "user");
+  assert.equal(primaryAccount.username, primaryAccount.id);
+  accountDatabase
+    .prepare("UPDATE users SET username = ? WHERE id = ?")
+    .run("primary", primaryAccount.id);
   accountDatabase.close();
 
   const duplicate = createClient(server.baseUrl);
   result = await request(duplicate, "/api/register", {
     method: "POST",
     body: {
-      username: "primary",
-      password: "different-password-that-is-long"
+      password: "primary-password-that-is-long"
     }
   });
   assert.equal(result.response.status, 409);
+  assert.equal(result.data.error, "password_in_use");
 
   result = await request(primary, "/api/notes", {
     method: "POST",
@@ -589,12 +704,65 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
   result = await request(user, "/api/register", {
     method: "POST",
     body: {
-      username: "usuario",
       password: "user-password-that-is-long"
     }
   });
   assert.equal(result.response.status, 201);
   const userCsrf = result.data.csrfToken;
+
+  insertLegacyUser(databasePath, "legacy-one", "shared-legacy-password");
+  insertLegacyUser(databasePath, "legacy-two", "shared-legacy-password");
+  const ambiguousLegacy = createClient(server.baseUrl);
+  result = await request(ambiguousLegacy, "/api/unlock", {
+    method: "POST",
+    body: { password: "shared-legacy-password" }
+  });
+  assert.equal(result.response.status, 409);
+  assert.equal(result.data.error, "ambiguous_password");
+
+  result = await request(ambiguousLegacy, "/api/unlock", {
+    method: "POST",
+    body: {
+      username: "legacy-one",
+      password: "shared-legacy-password"
+    }
+  });
+  assert.equal(result.response.status, 200);
+  const legacyCsrf = result.data.csrfToken;
+  result = await request(ambiguousLegacy, "/api/notes", {
+    method: "POST",
+    headers: { "X-CSRF-Token": legacyCsrf },
+    body: {
+      title: "Cofre legado preservado",
+      markdown: "Conteúdo legado acessível",
+      parentId: null
+    }
+  });
+  assert.equal(result.response.status, 201);
+  result = await request(ambiguousLegacy, "/api/notes");
+  assert.equal(result.data.notes[0].title, "Cofre legado preservado");
+  result = await request(ambiguousLegacy, "/api/password", {
+    method: "POST",
+    headers: { "X-CSRF-Token": legacyCsrf },
+    body: {
+      currentPassword: "shared-legacy-password",
+      newPassword: "unique-legacy-password"
+    }
+  });
+  assert.equal(result.response.status, 200);
+  result = await request(ambiguousLegacy, "/api/lock", {
+    method: "POST",
+    headers: { "X-CSRF-Token": legacyCsrf },
+    body: {}
+  });
+  assert.equal(result.response.status, 200);
+  result = await request(ambiguousLegacy, "/api/unlock", {
+    method: "POST",
+    body: { password: "unique-legacy-password" }
+  });
+  assert.equal(result.response.status, 200);
+  result = await request(ambiguousLegacy, "/api/notes");
+  assert.equal(result.data.notes[0].title, "Cofre legado preservado");
 
   result = await request(user, "/api/notes");
   assert.deepEqual(result.data.notes, []);
@@ -637,6 +805,17 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
     headers: { "X-CSRF-Token": primaryCsrf },
     body: {
       currentPassword: "primary-password-that-is-long",
+      newPassword: "user-password-that-is-long"
+    }
+  });
+  assert.equal(result.response.status, 409);
+  assert.equal(result.data.error, "password_in_use");
+
+  result = await request(primary, "/api/password", {
+    method: "POST",
+    headers: { "X-CSRF-Token": primaryCsrf },
+    body: {
+      currentPassword: "primary-password-that-is-long",
       newPassword: "new-primary-password-that-is-long"
     }
   });
@@ -651,16 +830,22 @@ test("Next.js preserva criptografia e isolamento entre cofres", async (t) => {
 
   result = await request(primary, "/api/unlock", {
     method: "POST",
-    body: { username: "primary", password: "new-primary-password-that-is-long" }
+    body: { password: "new-primary-password-that-is-long" }
   });
   assert.equal(result.response.status, 200);
+  result = await request(primary, "/api/notes");
+  assert.equal(result.response.status, 200);
+  assert.equal(
+    result.data.notes.some((note) => note.id === primaryNote.id),
+    true
+  );
 
   await new Promise((resolve) => setTimeout(resolve, 3200));
   result = await request(primary, "/api/notes");
   assert.equal(result.response.status, 401);
   result = await request(primary, "/api/unlock", {
     method: "POST",
-    body: { username: "primary", password: "new-primary-password-that-is-long" }
+    body: { password: "new-primary-password-that-is-long" }
   });
   assert.equal(result.response.status, 200);
 

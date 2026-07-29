@@ -10,26 +10,31 @@ export function POST(request: Request) {
   return api(async () => {
     const runtime = getRuntime();
     const body = await readJson(request);
-    const username = normalizeUsername(body.username);
     validatePassword(body.password);
-    runtime.sessions.assertLoginAllowed(username);
+    const legacyUsername = body.username === undefined
+      ? undefined
+      : normalizeUsername(body.username);
+    const attemptKey = runtime.sessions.passwordAttemptKey(body.password);
+    runtime.sessions.assertLoginAllowed(attemptKey);
 
     let authenticated;
     try {
-      authenticated = await runtime.vault.authenticate(username, body.password);
-    } catch {
-      runtime.sessions.recordLoginFailure(username);
-      throw new HttpError(401, "Usuário ou senha inválidos.", "invalid_credentials");
+      authenticated = await runtime.vault.authenticate(body.password, legacyUsername);
+    } catch (error) {
+      if (error instanceof HttpError && error.code === "ambiguous_password") {
+        throw error;
+      }
+      runtime.sessions.recordLoginFailure(attemptKey);
+      throw new HttpError(401, "Senha inválida.", "invalid_credentials");
     }
 
-    runtime.sessions.clearLoginFailures(username);
+    runtime.sessions.clearLoginFailures(attemptKey);
     const session = runtime.sessions.create(
       authenticated.user,
       authenticated.dataKey
     );
     const response = json({
-      csrfToken: session.csrfToken,
-      user: session.user
+      csrfToken: session.csrfToken
     });
     setSessionCookie(response, session.token, runtime.secureCookies);
     return response;
