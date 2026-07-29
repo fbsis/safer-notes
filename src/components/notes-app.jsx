@@ -61,6 +61,7 @@ export default function NotesApp() {
   const [saveStatus, setSaveStatus] = useState("Salvo");
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [attachments, setAttachments] = useState([]);
+  const [previewImageId, setPreviewImageId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const editorElement = useRef(null);
@@ -81,6 +82,8 @@ export default function NotesApp() {
   const normalizeBase64ImagesRef = useRef(null);
   const pasteHandlerRef = useRef(null);
   const selected = notes.find((note) => note.id === selectedId) || null;
+  const imageAttachments = attachments.filter((attachment) => attachment.isImage);
+  const fileAttachments = attachments.filter((attachment) => !attachment.isImage);
 
   useEffect(() => { notesRef.current = notes; }, [notes]);
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
@@ -94,6 +97,7 @@ export default function NotesApp() {
     setCollapsedIds(new Set());
     setSidebarOpen(false);
     setAttachments([]);
+    setPreviewImageId(null);
     setScreen("login");
     setMessage({ text });
   }, []);
@@ -240,6 +244,7 @@ export default function NotesApp() {
   useEffect(() => {
     let cancelled = false;
     setAttachments([]);
+    setPreviewImageId(null);
     if (!selectedId || screen !== "vault") return () => { cancelled = true; };
     requestApi(`/api/notes/${selectedId}/attachments`)
       .then((result) => {
@@ -529,6 +534,7 @@ export default function NotesApp() {
         }
       }
       setAttachments((current) => current.filter((item) => item.id !== attachment.id));
+      if (previewImageId === attachment.id) setPreviewImageId(null);
       await saveCurrentRef.current?.();
     } catch (error) {
       if (error.status === 401) handleLocked();
@@ -789,20 +795,54 @@ export default function NotesApp() {
               </button>
               <small>Arraste links ou arquivos. Até 50 MiB por arquivo e 500 MiB por nota.</small>
             </div>
-            {attachments.length > 0 && (
-              <div className="attachment-list" aria-label="Anexos da nota">
-                {attachments.map((attachment) => (
+            {imageAttachments.length > 0 && (
+              <section className="attachment-section" aria-labelledby="image-gallery-title">
+                <div className="attachment-section-heading">
+                  <h3 id="image-gallery-title">Imagens</h3>
+                  <small>{imageAttachments.length}</small>
+                </div>
+                <div className="image-gallery">
+                  {imageAttachments.map((attachment) => (
+                    <article className="image-card" key={attachment.id}>
+                      <button className="image-thumbnail"
+                        onClick={() => setPreviewImageId(attachment.id)}
+                        aria-label={`Abrir imagem ${attachment.name}`}>
+                        <img src={attachment.url} alt={attachment.name} loading="lazy" />
+                      </button>
+                      <div className="image-card-details">
+                        <span title={attachment.name}>{attachment.name}</span>
+                        <small>{formatBytes(attachment.size)}</small>
+                      </div>
+                      <button className="danger image-delete"
+                        onClick={() => deleteAttachment(attachment)}
+                        aria-label={`Excluir imagem ${attachment.name}`}>
+                        Excluir
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
+            {fileAttachments.length > 0 && (
+              <section className="attachment-section" aria-labelledby="file-list-title">
+                <div className="attachment-section-heading">
+                  <h3 id="file-list-title">Arquivos</h3>
+                  <small>{fileAttachments.length}</small>
+                </div>
+                <div className="attachment-list" aria-label="Arquivos anexados">
+                  {fileAttachments.map((attachment) => (
                   <div className="attachment-row" key={attachment.id}>
                     <a href={attachment.url} target="_blank" rel="noreferrer">
-                      {attachment.isImage ? "Imagem" : "Arquivo"} · {attachment.name}
+                      Arquivo · {attachment.name}
                     </a>
                     <small>{formatBytes(attachment.size)}</small>
                     <button className="danger" onClick={() => deleteAttachment(attachment)}>
                       Excluir
                     </button>
                   </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </section>
             )}
             <div className="editor-actions">
               <button className="danger" onClick={deleteNote}>Excluir nota</button>
@@ -820,6 +860,14 @@ export default function NotesApp() {
             <button type="submit">Alterar senha</button>
           </form>
         </Modal>
+      )}
+      {previewImageId && (
+        <ImagePreviewModal
+          images={imageAttachments}
+          currentId={previewImageId}
+          onChange={setPreviewImageId}
+          onClose={() => setPreviewImageId(null)}
+        />
       )}
     </main>
   );
@@ -887,6 +935,72 @@ function Modal({ title, children, onClose }) {
         onMouseDown={(event) => event.stopPropagation()}>
         <header><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Fechar">×</button></header>
         {children}
+      </section>
+    </div>
+  );
+}
+
+function ImagePreviewModal({ images, currentId, onChange, onClose }) {
+  const index = images.findIndex((image) => image.id === currentId);
+  const current = images[index];
+  const hasNavigation = images.length > 1;
+
+  const showPrevious = useCallback(() => {
+    if (!hasNavigation) return;
+    onChange(images[(index - 1 + images.length) % images.length].id);
+  }, [hasNavigation, images, index, onChange]);
+
+  const showNext = useCallback(() => {
+    if (!hasNavigation) return;
+    onChange(images[(index + 1) % images.length].id);
+  }, [hasNavigation, images, index, onChange]);
+
+  useEffect(() => {
+    const handleKey = (event) => {
+      if (event.key === "Escape") onClose();
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        showPrevious();
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        showNext();
+      }
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [onClose, showNext, showPrevious]);
+
+  if (!current) return null;
+
+  return (
+    <div className="image-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="image-modal" role="dialog" aria-modal="true"
+        aria-label={`Visualizando ${current.name}`}
+        onMouseDown={(event) => event.stopPropagation()}>
+        <header>
+          <div>
+            <strong title={current.name}>{current.name}</strong>
+            <small>{index + 1} de {images.length} · {formatBytes(current.size)}</small>
+          </div>
+          <button className="image-modal-close" onClick={onClose} aria-label="Fechar">×</button>
+        </header>
+        <div className="image-modal-stage">
+          {hasNavigation && (
+            <button className="image-modal-arrow previous" onClick={showPrevious}
+              aria-label="Imagem anterior">‹</button>
+          )}
+          <img src={current.url} alt={current.name} />
+          {hasNavigation && (
+            <button className="image-modal-arrow next" onClick={showNext}
+              aria-label="Próxima imagem">›</button>
+          )}
+        </div>
       </section>
     </div>
   );

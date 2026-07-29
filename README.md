@@ -78,6 +78,9 @@ seus bytes faz a leitura falhar.
   enviadas à tabela de anexos e substituídas pela URL interna criptografada;
 - protocolos ativos como `javascript:` e `data:` são rejeitados no drop;
 - PNG, JPEG, GIF, WebP e AVIF são exibidos dentro do editor;
+- imagens também aparecem em uma galeria abaixo do editor; ao abrir uma
+  miniatura, o modal permite navegar pelas demais com botões ou setas do
+  teclado;
 - arquivos genéricos aparecem como links de consulta e são baixados como
   `application/octet-stream`, independentemente do MIME informado;
 - o limite é de 50 MiB por arquivo e 500 MiB de anexos por nota;
